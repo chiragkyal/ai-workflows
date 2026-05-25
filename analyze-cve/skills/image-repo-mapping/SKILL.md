@@ -52,13 +52,71 @@ Do NOT fall back to guessing, fuzzy matching, or prompting the user inline. Exit
 
 ---
 
+## Two Repository Patterns
+
+Components fall into one of two patterns. The resolution output is different for each.
+
+### Pattern A — Direct repo
+
+Clone the mapped repo directly at the mapped branch. Used by: Operator SDK, Ansible Operator, must-gather, Secrets Store CSI.
+
+```
+image → repo URL + branch
+```
+
+### Pattern B — Release repo with git submodules
+
+Some components use a dedicated `-release` repo that aggregates all component repos as git submodules. The release repo branch pins each submodule to the exact commit/tag used for that release. Used by: cert-manager, ZTWIM, ESO.
+
+**Resolution steps for Pattern B:**
+1. Clone the **release repo** at the mapped release branch
+2. Read `.gitmodules` from that branch to find the submodule entry matching the target image
+3. Extract the submodule `url` and `branch`/`tag` from `.gitmodules`
+4. Clone the **component repo** at that pinned ref for analysis
+
+```bash
+# Step 1: Clone release repo at correct branch
+git clone --depth=1 -b "${RELEASE_BRANCH}" "${RELEASE_REPO_URL}" /tmp/release-repo
+
+# Step 2: Read .gitmodules
+cat /tmp/release-repo/.gitmodules
+
+# Step 3: Extract the relevant submodule url + branch/tag
+# Step 4: Clone component repo at pinned ref
+git clone --depth=50 -b "${COMPONENT_BRANCH}" "${COMPONENT_URL}" "${REPO_DIR}"
+# or for a tag:
+git clone --depth=1 --branch "${COMPONENT_TAG}" "${COMPONENT_URL}" "${REPO_DIR}"
+```
+
+**Jira branch → release branch naming for Pattern B:**
+
+| Jira `BRANCH` value | Release branch |
+|---|---|
+| `cert-manager-X-Y` | `release-X.Y` in `cert-manager-operator-release` |
+| `external-secrets-X-Y` | `release-X.Y` in `external-secrets-operator-release` |
+| `ztwim-X.Y` | `release-X.Y` in `zero-trust-workload-identity-manager-release` |
+
+> **Note:** Jira branch values use hyphens for separators (e.g. `external-secrets-1-0`) while release branches use dots (e.g. `release-1.0`). Strip the component prefix and convert the remaining hyphen-separated version to dot notation.
+
+---
+
 ## Image → Repository Map
 
 > Every image name here has appeared in real ticket summaries or labels.
 
-### cert-manager / jetstack
+### cert-manager / jetstack — Pattern B (release repo + submodules)
 
-The `cert-manager` namespace spans **three** repositories — match on the full image name, not just the namespace prefix.
+**Release repo:** `https://github.com/openshift/cert-manager-operator-release`  
+**Submodules:** `cert-manager-operator`, `cert-manager`, `cert-manager-istio-csr`  
+**Branch mapping:** Jira `cert-manager-X-Y` → `release-X.Y` in the release repo
+
+Clone the release repo at the correct branch, read `.gitmodules` to find the submodule URL and pinned ref for the target image, then clone that component at the pinned ref.
+
+| Image Name / Prefix | Submodule in `.gitmodules` |
+|---|---|
+| `cert-manager/cert-manager-operator-rhel9`, `cert-manager/cert-manager-operator-bundle`, `cert-manager-operator-*` | `cert-manager-operator` |
+| `cert-manager/cert-manager-istio-csr-rhel9` | `cert-manager-istio-csr` |
+| `cert-manager/jetstack-cert-manager-*`, `jetstack-cert-manager-*`, `redhat-user-workloads/jetstack-cert-manager-*` | `cert-manager` |
 
 #### cert-manager-operator (operator + bundle only)
 
@@ -125,39 +183,39 @@ The `cert-manager` namespace spans **three** repositories — match on the full 
 
 ---
 
-### External Secrets Operator
+### External Secrets Operator — Pattern B (release repo + submodules)
 
-The `external-secrets-operator` namespace spans **three** repositories — match on the full image name.
+**Release repo:** `https://github.com/openshift/external-secrets-operator-release`  
+**Submodules:** `external-secrets-operator`, `external-secrets`, `bitwarden-sdk-server`  
+**Branch mapping:** Jira `external-secrets-X-Y` → `release-X.Y` in the release repo  
 
-#### external-secrets-operator (operator + bundle)
+Clone the release repo at the correct branch, read `.gitmodules` to find the submodule URL and pinned ref for the target image, then clone that component at the pinned ref.
 
-| Image Name / Prefix | GitHub Repository |
+| Image Name / Prefix | Submodule in `.gitmodules` |
 |---|---|
-| `external-secrets-operator/external-secrets-operator-rhel9` | `https://github.com/openshift/external-secrets-operator` |
-| `external-secrets-operator/external-secrets-operator-bundle` | `https://github.com/openshift/external-secrets-operator` |
-| `redhat-user-workloads/external-secrets-operator-1-0` | `https://github.com/openshift/external-secrets-operator` |
-| `redhat-user-workloads/external-secrets-operator-bundle-1-0` | `https://github.com/openshift/external-secrets-operator` |
+| `external-secrets-operator/external-secrets-operator-rhel9`, `external-secrets-operator/external-secrets-operator-bundle`, `redhat-user-workloads/external-secrets-operator-*` | `external-secrets-operator` |
+| `external-secrets-operator/external-secrets-rhel9`, `redhat-user-workloads/external-secrets-1-0` | `external-secrets` |
+| `external-secrets-operator/bitwarden-sdk-server-rhel9`, `redhat-user-workloads/bitwarden-sdk-server-*` | `bitwarden-sdk-server` |
 
-#### external-secrets
-
-| Image Name / Prefix | GitHub Repository |
-|---|---|
-| `external-secrets-operator/external-secrets-rhel9` | `https://github.com/openshift/external-secrets` |
-| `redhat-user-workloads/external-secrets-1-0` | `https://github.com/openshift/external-secrets` |
-
-#### external-secrets-bitwarden-sdk-server
-
-| Image Name / Prefix | GitHub Repository |
-|---|---|
-| `external-secrets-operator/bitwarden-sdk-server-rhel9` | `https://github.com/openshift/external-secrets-bitwarden-sdk-server` |
-| `redhat-user-workloads/bitwarden-sdk-server-1-0` | `https://github.com/openshift/external-secrets-bitwarden-sdk-server` |
-
-**Namespace prefix match:** `external-secrets-operator` → requires full image name lookup above (multiple repos in this namespace).  
-**Keyword match:** `external-secrets-operator` / `external-secrets-operator-bundle` → `external-secrets-operator`; `bitwarden-sdk-server` → `external-secrets-bitwarden-sdk-server`; `external-secrets-rhel9` / `external-secrets-1-0` → `external-secrets`.
+**Keyword match:** `external-secrets-operator` / `external-secrets-operator-bundle` → submodule `external-secrets-operator`; `bitwarden-sdk-server` → submodule `bitwarden-sdk-server`; `external-secrets-rhel9` / `external-secrets-1-0` → submodule `external-secrets`.
 
 ---
 
-### Zero Trust / SPIFFE / SPIRE
+### Zero Trust / SPIFFE / SPIRE — Pattern B (release repo + submodules)
+
+**Release repo:** `https://github.com/openshift/zero-trust-workload-identity-manager-release`  
+**Submodules:** `zero-trust-workload-identity-manager` (spire-operator), `spiffe-spire`, `spiffe-spire-controller-manager`, `spiffe-spiffe-csi`  
+**Branch mapping:** Jira `ztwim-X.Y` → `release-X.Y` in the release repo
+
+Clone the release repo at the correct branch (`--recurse-submodules` is NOT needed — read `.gitmodules` manually and clone only the relevant submodule), then clone that component at the pinned ref.
+
+| Image Name / Prefix | Submodule in `.gitmodules` |
+|---|---|
+| `zero-trust-workload-identity-manager/zero-trust-workload-identity-manager-rhel9`, `*-operator-bundle` | `zero-trust-workload-identity-manager` |
+| `zero-trust-workload-identity-manager/spiffe-spire-agent-rhel9`, `*spiffe-spire-server*`, `*spire-oidc*`, `redhat-user-workloads/spiffe-spire-*` | `spiffe-spire` |
+| `zero-trust-workload-identity-manager/spiffe-spire-controller-manager-rhel9` | `spiffe-spire-controller-manager` |
+| `zero-trust-workload-identity-manager/spiffe-csi-driver-rhel9`, `redhat-user-workloads/spiffe-csi-driver-*` | `spiffe-spiffe-csi` |
+| `zero-trust-workload-identity-manager/spiffe-helper-rhel9` | `spiffe-spiffe-helper` |
 
 The `zero-trust-workload-identity-manager` namespace spans **four** repositories — match on the full image name, not just the namespace prefix.
 

@@ -113,23 +113,83 @@ Determine `REPO_URL` using the first applicable source:
 **Decision Point:**
 - IF `REPO_URL` still unresolved after prompting → Exit with error.
 
-### Step 3: Clone the Repository
+### Step 3: Resolve the Target Branch and Repository Pattern
+
+Check whether the image maps to a **Pattern A** (direct repo) or **Pattern B** (release repo + submodules) component — this is indicated in the `image-repo-mapping` skill output.
+
+**If Pattern B:** the `REPO_URL` returned by `image-repo-mapping` is the release repo URL. Continue to Step 3a (release repo clone), then Step 3c (submodule resolution), then Step 3b (component clone).
+
+**If Pattern A:** skip Steps 3a and 3c. Proceed directly to Step 3b with `GIT_BRANCH` from Step 3 below.
+
+### Step 3a (Pattern B only): Clone the Release Repo and Read `.gitmodules`
+
+Use `BRANCH` extracted by `jira-cve-extraction` (e.g. `openshift-4.17`, `ztwim-1.0`).
+
+**Branch name mapping** — Jira ticket summaries use a different naming convention from the actual git branches:
+
+| Jira `BRANCH` value | Component group | Git branch |
+|---|---|---|
+| `openshift-X.Y` | Operator SDK, Ansible, must-gather, Secrets Store CSI (Pattern A) | `release-X.Y` |
+| `openshift-X.Y.z` | (same Pattern A components) | `release-X.Y.z` |
+| `cert-manager-X-Y` | cert-manager (Pattern B release repo) | `release-X.Y` |
+| `external-secrets-X-Y` | ESO (Pattern B release repo) | `release-X.Y` |
+| `ztwim-X.Y` | ZTWIM (Pattern B release repo) | `release-X.Y` |
+| Any other value | Use verbatim |
+
+**Verify the branch exists before cloning:**
+
+```bash
+git ls-remote --heads "${REPO_URL}" "${GIT_BRANCH}" | grep -q "${GIT_BRANCH}"
+```
+
+- IF branch exists → clone with `-b "${GIT_BRANCH}"` in Step 3b.
+- IF branch does not exist → try the Jira value verbatim as a fallback, then warn user and ask to confirm or provide the correct branch name.
+- IF `BRANCH` was not extracted (direct CVE mode, no Jira ticket) → clone default branch; note this in the analysis.
+
+### Step 3c (Pattern B only): Read `.gitmodules` and Resolve Component Repo
+
+```bash
+# Clone release repo (shallow, no submodule content needed)
+git clone --depth=1 -b "${GIT_BRANCH}" "${RELEASE_REPO_URL}" /tmp/release-repo
+
+# Print .gitmodules so the model can parse it
+cat /tmp/release-repo/.gitmodules
+```
+
+From `.gitmodules`, find the entry matching the target image (use the submodule name from the `image-repo-mapping` skill output). Extract:
+- `url` → the component repo to clone (`COMPONENT_URL`)
+- `branch` → clone at this branch (`COMPONENT_BRANCH`)
+- `tag` → if present instead of `branch`, clone at this tag (`COMPONENT_TAG`)
+
+Set `REPO_URL = COMPONENT_URL` and `GIT_BRANCH = COMPONENT_BRANCH` (or `COMPONENT_TAG`) for Step 3b.
+
+### Step 3b: Clone the Repository
 
 ```bash
 REPO_NAME=$(basename "${REPO_URL}" .git)
 REPO_DIR="/workspace/repos/${REPO_NAME}"
 
 if [ ! -d "${REPO_DIR}/.git" ]; then
-  echo "Cloning ${REPO_URL} into ${REPO_DIR} ..."
-  git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+  echo "Cloning ${REPO_URL} (branch: ${GIT_BRANCH:-default}) into ${REPO_DIR} ..."
+  if [ -n "${GIT_BRANCH}" ]; then
+    git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+  else
+    git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+  fi
 else
-  echo "Repository already present at ${REPO_DIR}, pulling latest..."
+  CURRENT_BRANCH=$(git -C "${REPO_DIR}" rev-parse --abbrev-ref HEAD)
+  if [ -n "${GIT_BRANCH}" ] && [ "${CURRENT_BRANCH}" != "${GIT_BRANCH}" ]; then
+    echo "Switching from ${CURRENT_BRANCH} to ${GIT_BRANCH} ..."
+    git -C "${REPO_DIR}" fetch origin "${GIT_BRANCH}"
+    git -C "${REPO_DIR}" checkout "${GIT_BRANCH}"
+  fi
   git -C "${REPO_DIR}" pull --ff-only
 fi
 ```
 
-- IF clone fails (auth error, not found) → Display error with fix instructions and Exit.
-- IF clone succeeds → set `REPO_DIR` as working directory for all subsequent phases.
+- IF clone fails (auth error, not found, branch missing) → Display error with fix instructions and Exit.
+- IF clone succeeds → set `REPO_DIR` and `GIT_BRANCH` as working context for all subsequent phases.
+- Always confirm the checked-out branch in the session output: `✓ Cloned <REPO_URL> @ <GIT_BRANCH>`
 
 ### Step 4: Verify Go Project
 
