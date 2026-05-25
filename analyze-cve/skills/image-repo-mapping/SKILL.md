@@ -112,23 +112,47 @@ All `cert-manager/*` and `jetstack-*` images map to the cert-manager operator re
 
 ### Zero Trust / SPIFFE / SPIRE
 
+The `zero-trust-workload-identity-manager` namespace spans **four** repositories — match on the full image name, not just the namespace prefix.
+
+#### spire-operator (operator + bundle only)
+
 | Image Name / Prefix | GitHub Repository |
 |---|---|
 | `zero-trust-workload-identity-manager/zero-trust-workload-identity-manager-rhel9` | `https://github.com/openshift/spire-operator` |
 | `zero-trust-workload-identity-manager/zero-trust-workload-identity-manager-operator-bundle` | `https://github.com/openshift/spire-operator` |
-| `zero-trust-workload-identity-manager/spiffe-spire-agent-rhel9` | `https://github.com/openshift/spire-operator` |
-| `zero-trust-workload-identity-manager/spiffe-spire-server-rhel9` | `https://github.com/openshift/spire-operator` |
-| `zero-trust-workload-identity-manager/spiffe-spire-controller-manager-rhel9` | `https://github.com/openshift/spire-operator` |
-| `zero-trust-workload-identity-manager/spiffe-spire-oidc-discovery-provider-rhel9` | `https://github.com/openshift/spire-operator` |
-| `zero-trust-workload-identity-manager/spiffe-csi-driver-rhel9` | `https://github.com/openshift/spire-operator` |
-| `zero-trust-workload-identity-manager/spiffe-helper-rhel9` | `https://github.com/openshift/spire-operator` |
-| `redhat-user-workloads/spiffe-spire-agent-*` | `https://github.com/openshift/spire-operator` |
-| `redhat-user-workloads/spiffe-spire-server-*` | `https://github.com/openshift/spire-operator` |
-| `redhat-user-workloads/spiffe-spire-oidc-discovery-provider-*` | `https://github.com/openshift/spire-operator` |
-| `redhat-user-workloads/spiffe-csi-driver-*` | `https://github.com/openshift/spire-operator` |
 
-**Namespace prefix match:** `zero-trust-workload-identity-manager` → `https://github.com/openshift/spire-operator`  
-**Keyword match:** any image containing `spiffe` or `spire` → `https://github.com/openshift/spire-operator`
+#### spiffe-spire (agent, server, OIDC discovery provider)
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `zero-trust-workload-identity-manager/spiffe-spire-agent-rhel9` | `https://github.com/openshift/spiffe-spire` |
+| `zero-trust-workload-identity-manager/spiffe-spire-server-rhel9` | `https://github.com/openshift/spiffe-spire` |
+| `zero-trust-workload-identity-manager/spiffe-spire-oidc-discovery-provider-rhel9` | `https://github.com/openshift/spiffe-spire` |
+| `redhat-user-workloads/spiffe-spire-agent-*` | `https://github.com/openshift/spiffe-spire` |
+| `redhat-user-workloads/spiffe-spire-server-*` | `https://github.com/openshift/spiffe-spire` |
+| `redhat-user-workloads/spiffe-spire-oidc-discovery-provider-*` | `https://github.com/openshift/spiffe-spire` |
+
+#### spiffe-spire-controller-manager
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `zero-trust-workload-identity-manager/spiffe-spire-controller-manager-rhel9` | `https://github.com/openshift/spiffe-spire-controller-manager` |
+
+#### spiffe-spiffe-csi (CSI driver)
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `zero-trust-workload-identity-manager/spiffe-csi-driver-rhel9` | `https://github.com/openshift/spiffe-spiffe-csi` |
+| `redhat-user-workloads/spiffe-csi-driver-*` | `https://github.com/openshift/spiffe-spiffe-csi` |
+
+#### spiffe-spiffe-helper
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `zero-trust-workload-identity-manager/spiffe-helper-rhel9` | `https://github.com/openshift/spiffe-spiffe-helper` |
+
+**Namespace prefix match:** `zero-trust-workload-identity-manager` → requires full image name lookup above (multiple repos in this namespace).  
+**Keyword match:** `spire-agent` / `spire-server` / `spire-oidc` → `https://github.com/openshift/spiffe-spire`; `spire-controller-manager` → `https://github.com/openshift/spiffe-spire-controller-manager`; `spiffe-csi-driver` → `https://github.com/openshift/spiffe-spiffe-csi`; `spiffe-helper` → `https://github.com/openshift/spiffe-spiffe-helper`; `zero-trust-workload-identity-manager` (manager/bundle) → `https://github.com/openshift/spire-operator`.
 
 ---
 
