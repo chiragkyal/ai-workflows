@@ -23,11 +23,32 @@ Apply these in order and stop at the first match:
 1. **Full GitHub URL supplied** (`--repo=https://github.com/...`) → use directly, skip this skill.
 2. **Exact image name match** — look the image name up in the table below.
 3. **Prefix match** — strip version suffixes (e.g. `-1-0`, `-1-12-4`, `-rhel9`, `-rhel8`) and re-match.
-4. **Namespace prefix match** — if image is `<namespace>/<name>`, match on the `<namespace>` alone.
-5. **Fuzzy match** — find the closest entry and confirm with the user.
-6. **Prompt** — ask the user for the GitHub URL.
+4. **Keyword match** — check the per-section keyword rules at the bottom of each group.
+5. **NOT FOUND → Exit immediately** with the error message below. Do not guess. Do not proceed with analysis.
 
 > **Tip:** Strip `pkg:oci/` prefix before matching (e.g. `pkg:oci/ose-ansible-operator` → `ose-ansible-operator`).
+
+### Not-Found Exit
+
+If no match is found after all steps above, **stop immediately** and output:
+
+```
+❌ Repository mapping not found for image: <image_name>
+
+The image "<image_name>" is not in the known mapping table and could not
+be resolved automatically.
+
+To proceed, re-run with an explicit repository URL:
+
+  --repo=https://github.com/org/repo
+
+Or add the mapping to:
+  analyze-cve/skills/image-repo-mapping/SKILL.md
+
+Do NOT continue analysis without a confirmed source repository.
+```
+
+Do NOT fall back to guessing, fuzzy matching, or prompting the user inline. Exit the workflow at this point.
 
 ---
 
@@ -218,6 +239,7 @@ The namespace spans **two** repositories. The mustgather image is built from the
 
 ## Return Value
 
+**Success:**
 ```json
 {
   "skill": "image-repo-mapping",
@@ -236,7 +258,17 @@ The namespace spans **two** repositories. The mustgather image is built from the
 }
 ```
 
-`confidence`: `exact_match`, `prefix_match`, `namespace_match`, `keyword_match`, `user_provided`
+**Not found (exit):**
+```json
+{
+  "skill": "image-repo-mapping",
+  "status": "not_found",
+  "image_name": "<image_name>",
+  "error": "No repository mapping found. Re-run with --repo=https://github.com/org/repo or add the mapping to image-repo-mapping/SKILL.md."
+}
+```
+
+`confidence`: `exact_match`, `prefix_match`, `keyword_match`, `user_provided`
 
 ---
 
