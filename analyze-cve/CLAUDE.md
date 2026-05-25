@@ -99,7 +99,9 @@ Determine `REPO_URL` using the first applicable source:
 1. `--repo` flag was provided:
    - IF it looks like a full URL (`https://...`) → use as `REPO_URL` directly.
    - IF it looks like a component name or short alias → run `component-repo-mapping` skill to resolve.
-2. `--jira` was used and `jira_context.components` is non-empty → run `component-repo-mapping` skill with those component names.
+2. `--jira` was used:
+   - IF `jira_context.components` is non-empty → run `component-repo-mapping` skill with those component names.
+   - ELSE IF `jira_context.component_hints` is non-empty → run `component-repo-mapping` with those keyword hints (extracted from ticket summary/description).
 3. Neither applies → prompt user: "Please provide the repository URL or component name to analyse (e.g. https://github.com/openshift/hypershift or --repo=hypershift)."
 
 **Decision Point:**
