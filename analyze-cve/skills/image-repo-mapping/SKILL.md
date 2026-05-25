@@ -191,12 +191,28 @@ The `zero-trust-workload-identity-manager` namespace spans **four** repositories
 
 ---
 
-### Secrets Store CSI _(no historical tickets yet — mappings pre-registered)_
+### Secrets Store CSI
+
+The namespace spans **two** repositories. The mustgather image is built from the operator repo.
+
+#### secrets-store-csi-driver-operator (operator, bundle, mustgather)
 
 | Image Name / Prefix | GitHub Repository |
 |---|---|
-| `secrets-store-csi-driver-operator` | `https://github.com/openshift/secrets-store-csi-driver-operator` |
-| `secrets-store-csi-driver` | `https://github.com/openshift/secrets-store-csi-driver` |
+| `openshift4/ose-secrets-store-csi-driver-rhel9-operator` | `https://github.com/openshift/secrets-store-csi-driver-operator` |
+| `openshift4/ose-secrets-store-csi-driver-operator-bundle` | `https://github.com/openshift/secrets-store-csi-driver-operator` |
+| `ose-secrets-store-csi-driver-operator-container` | `https://github.com/openshift/secrets-store-csi-driver-operator` |
+| `openshift4/ose-secrets-store-csi-mustgather-rhel9` | `https://github.com/openshift/secrets-store-csi-driver-operator` |
+| `ose-secrets-store-csi-mustgather-container` | `https://github.com/openshift/secrets-store-csi-driver-operator` |
+
+#### secrets-store-csi-driver (driver only)
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `openshift4/ose-secrets-store-csi-driver-rhel9` | `https://github.com/openshift/secrets-store-csi-driver` |
+| `ose-secrets-store-csi-driver-container` | `https://github.com/openshift/secrets-store-csi-driver` |
+
+**Keyword match:** `secrets-store-csi-mustgather` / `secrets-store-csi-driver-operator` / `secrets-store-csi-driver-operator-bundle` → `secrets-store-csi-driver-operator`; `secrets-store-csi-driver-rhel9` (driver image, not operator) → `secrets-store-csi-driver`.
 
 ---
 
