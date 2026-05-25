@@ -145,8 +145,10 @@ fi
 ## Phase 1: CVE Intelligence Gathering
 
 - **Skill**: [cve-intelligence-gathering](skills/cve-intelligence-gathering/SKILL.md)
-- **Input**: CVE-ID from user input
-- **Output**: CVE profile (severity, affected packages, fixed versions, remediation guidance, Go relevance)
+- **Input**: CVE-ID from user input **+ `jira_context` from Phase 0.5 (if `--jira` was provided)**
+- **Output**: Merged CVE profile combining Jira internal data with public sources (NVD, GHSA, Go vulndb)
+
+Pass the full `jira_context` object from Phase 0.5 into the skill. The skill uses Jira fields (CVSS, CWE, affected versions, internal notes, workarounds, release note text) as a pre-populated starting point, then uses web searches to verify, fill gaps, and add public context. Neither source replaces the other — both are combined.
 
 **Decision Point:**
 - IF invalid CVE format → Exit with error
