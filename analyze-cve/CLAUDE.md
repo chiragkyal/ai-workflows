@@ -68,18 +68,26 @@ go install golang.org/x/tools/cmd/digraph@latest
 - **Skill**: [jira-cve-extraction](skills/jira-cve-extraction/SKILL.md)
 - **References**: [`reference/jira-mcp-tools.md`](reference/jira-mcp-tools.md), [`reference/jira-cli-fallback.md`](reference/jira-cli-fallback.md)
 - **Input**: Jira ticket key from `--jira` argument
-- **Output**: Resolved `CVE_ID` + `jira_context` enrichment block (includes `components` list)
+- **Output**: `CVE_ID`, `IMAGE_NAME`, `BRANCH`, and full `jira_context` enrichment block
+
+**Extraction priority (per skill):**
+1. Parse ticket **summary** — format `CVE-YYYY-NNNNN <image>: <desc> [branch]` — provides CVE ID, image name, and branch in one step
+2. `pscomponent:` label → image name fallback
+3. `Downstream Component Name` custom field → image name fallback
+4. `Custom field (CVE ID)` → CVE ID fallback
 
 **Decision Point:**
 - IF ticket not found or access denied → Exit with error
-- IF no CVE ID found in ticket → Prompt user to supply it manually; if declined → Exit
-- IF CVE ID resolved → Set `CVE_ID`, carry `jira_context` forward → Continue to Phase 0.7
+- IF `embargo_status = True` → **Exit immediately. Do not proceed. Do not output any ticket data.**
+- IF no CVE ID found → Prompt user to supply manually; if declined → Exit
+- IF no image name found → Leave blank; Phase 0.7 will prompt
+- IF resolved → Set `CVE_ID` + `IMAGE_NAME`, carry `jira_context` (includes CVSS, CWE, priority, versions) forward → Continue to Phase 0.7
 
 ---
 
 ## Phase 0.7: Repository Resolution and Cloning
 
-- **Skill**: [component-repo-mapping](skills/component-repo-mapping/SKILL.md)
+- **Skill**: [image-repo-mapping](skills/image-repo-mapping/SKILL.md)
 - **Working directory for all subsequent phases**: `/workspace/repos/<repo-name>`
 
 ### Step 1: Check for Pre-Cloned Repository
@@ -96,13 +104,11 @@ ls /workspace/repos/ 2>/dev/null
 
 Determine `REPO_URL` using the first applicable source:
 
-1. `--repo` flag was provided:
-   - IF it looks like a full URL (`https://...`) → use as `REPO_URL` directly.
-   - IF it looks like a component name or short alias → run `component-repo-mapping` skill to resolve.
-2. `--jira` was used:
-   - IF `jira_context.components` is non-empty → run `component-repo-mapping` skill with those component names.
-   - ELSE IF `jira_context.component_hints` is non-empty → run `component-repo-mapping` with those keyword hints (extracted from ticket summary/description).
-3. Neither applies → prompt user: "Please provide the repository URL or component name to analyse (e.g. https://github.com/openshift/hypershift or --repo=hypershift)."
+1. **`--repo` flag provided**:
+   - Full URL (`https://...`) → use directly.
+   - Short name or image name → run `image-repo-mapping` skill.
+2. **`--jira` was used and `IMAGE_NAME` was extracted** → run `image-repo-mapping` skill with `IMAGE_NAME`.
+3. **Neither** → prompt user: "Please provide the repository URL or image name (e.g. https://github.com/openshift/cert-manager-operator or --repo=cert-manager-operator-rhel9)."
 
 **Decision Point:**
 - IF `REPO_URL` still unresolved after prompting → Exit with error.
