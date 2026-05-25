@@ -37,7 +37,9 @@ Apply these in order and stop at the first match:
 
 ### cert-manager / jetstack
 
-All `cert-manager/*` and `jetstack-*` images map to the cert-manager operator repo.
+The `cert-manager` namespace spans **three** repositories — match on the full image name, not just the namespace prefix.
+
+#### cert-manager-operator (operator + bundle only)
 
 | Image Name / Prefix | GitHub Repository |
 |---|---|
@@ -45,16 +47,27 @@ All `cert-manager/*` and `jetstack-*` images map to the cert-manager operator re
 | `cert-manager-operator-rhel9` | `https://github.com/openshift/cert-manager-operator` |
 | `cert-manager/cert-manager-operator-rhel9` | `https://github.com/openshift/cert-manager-operator` |
 | `cert-manager/cert-manager-operator-bundle` | `https://github.com/openshift/cert-manager-operator` |
-| `cert-manager/cert-manager-istio-csr-rhel9` | `https://github.com/openshift/cert-manager-operator` |
-| `cert-manager/jetstack-cert-manager-rhel9` | `https://github.com/openshift/cert-manager-operator` |
-| `cert-manager/jetstack-cert-manager-acmesolver-rhel9` | `https://github.com/openshift/cert-manager-operator` |
-| `jetstack-cert-manager-rhel9` | `https://github.com/openshift/cert-manager-operator` |
-| `jetstack-cert-manager-container` | `https://github.com/openshift/cert-manager-operator` |
-| `jetstack-cert-manager-acmesolver-rhel9` | `https://github.com/openshift/cert-manager-operator` |
-| `jetstack-cert-manager-acmesolver-container` | `https://github.com/openshift/cert-manager-operator` |
-| `redhat-user-workloads/jetstack-cert-manager-*` | `https://github.com/openshift/cert-manager-operator` |
 
-**Namespace prefix match:** `cert-manager` → `https://github.com/openshift/cert-manager-operator`
+#### cert-manager-istio-csr
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `cert-manager/cert-manager-istio-csr-rhel9` | `https://github.com/openshift/cert-manager-istio-csr` |
+
+#### jetstack-cert-manager
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `cert-manager/jetstack-cert-manager-rhel9` | `https://github.com/openshift/jetstack-cert-manager` |
+| `cert-manager/jetstack-cert-manager-acmesolver-rhel9` | `https://github.com/openshift/jetstack-cert-manager` |
+| `jetstack-cert-manager-rhel9` | `https://github.com/openshift/jetstack-cert-manager` |
+| `jetstack-cert-manager-container` | `https://github.com/openshift/jetstack-cert-manager` |
+| `jetstack-cert-manager-acmesolver-rhel9` | `https://github.com/openshift/jetstack-cert-manager` |
+| `jetstack-cert-manager-acmesolver-container` | `https://github.com/openshift/jetstack-cert-manager` |
+| `redhat-user-workloads/jetstack-cert-manager-*` | `https://github.com/openshift/jetstack-cert-manager` |
+
+**Namespace prefix match:** `cert-manager` → requires full image name lookup above (multiple repos in this namespace).  
+**Keyword match:** `cert-manager-operator` / `cert-manager-operator-bundle` → `cert-manager-operator`; `cert-manager-istio-csr` → `cert-manager-istio-csr`; `jetstack-cert-manager` → `jetstack-cert-manager`.
 
 ---
 
