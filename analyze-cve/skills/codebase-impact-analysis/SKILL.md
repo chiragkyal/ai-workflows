@@ -100,13 +100,24 @@ go list -mod=mod <vulnerable-package>
 - Identify actual code paths that use vulnerable functions
 - Check if vulnerable functions are called in reachable code
 
-#### Method 5: Call Graph Reachability Analysis (Highest Confidence)
+#### Method 5: Call Graph Reachability Analysis (Mandatory when package is present)
 
 Delegate to the [call-graph-analysis](../call-graph-analysis/SKILL.md) skill.
 
 - **Pass**: `--algo` preference from user, vulnerable function signature, package path
 - **Receive**: Risk level, call chain, evidence files
-- **Only run if**: Codebase compiles successfully and highest confidence assessment is needed
+
+**This method is REQUIRED whenever the vulnerable package is present in `go.mod`** — regardless of what Methods 2, 3, or 4 found. Source code analysis (Method 4) is heuristic: it can miss indirect calls through interfaces, generated code, and runtime dispatch. Only a call graph provides provable reachability.
+
+**Valid reasons to skip call graph:**
+- Package is NOT in `go.mod` (genuinely unreachable — LOW RISK by definition)
+- Codebase does not compile (note the limitation; rely on other methods)
+- Vulnerable function signature is unknown (note the gap; rely on govulncheck and source analysis)
+
+**NOT a valid reason to skip:**
+- Source code analysis found no direct calls to the vulnerable function
+- govulncheck did not flag it (CVE may not be in the Go vuln DB yet)
+- The analysis "feels" complete from earlier methods
 
 #### Method 6: Configuration and Context Analysis
 
@@ -122,10 +133,10 @@ Each method provides increasing confidence:
 1. **Basic Presence** (Low) — Package in `go.mod` (Method 1, 3)
 2. **Import & Version Analysis** (Medium) — Package imported, version in vulnerable range, function names found (Method 4)
 3. **Vulnerability Scanner** (Medium-High) — `govulncheck` confirms reachable vulnerable symbols (Method 2)
-4. **Call Graph Reachability** (Highest) — Proven execution path from entry point to vulnerable function (Method 5)
+4. **Call Graph Reachability** (Definitive) — Proven execution path from entry point to vulnerable function (Method 5)
 5. **Context Analysis** — Mitigating or aggravating factors (Method 6)
 
-Use multiple methods. Confidence determination should be data-driven, not formula-based.
+**Required minimum:** If the package is in `go.mod`, the analysis is not complete until Method 5 has run or a valid skip reason has been documented. Never stop at Method 4 alone.
 
 ### Step 3: Build Evidence Package
 
@@ -145,13 +156,16 @@ Evaluate all evidence and assign a risk level. The determination should be data-
 - Call graph shows reachable path to vulnerable function, OR govulncheck confirms vulnerability
 
 **MEDIUM RISK:**
-- Package + vulnerable version found in dependencies, usage evidence present but reachability not fully proven
+- Package + vulnerable version in dependencies, usage evidence present, but call graph could not run (build failure or unknown function signature) — reachability not definitively proven
 
 **LOW RISK:**
-- Package not in dependencies, OR version not in vulnerable range, OR no reachable path found
+- Package not in dependencies (call graph skipped — genuinely unreachable), OR version not in vulnerable range, OR call graph ran and found no reachable path
 
 **NEEDS REVIEW:**
-- Conflicting signals, incomplete analysis, or low-confidence evidence
+- Package is in `go.mod` but call graph was skipped for any reason other than package absence or build failure — escalate; do not leave as LOW based on source code analysis alone
+- Conflicting signals or incomplete analysis
+
+> **Rule:** If package is in `go.mod` and call graph was skipped because source analysis "found nothing", assign **NEEDS REVIEW**, not LOW RISK. Document the skip reason explicitly.
 
 ## Return Value
 
@@ -180,7 +194,8 @@ Return structured result to parent command:
       "algorithm": "<vta|rta|cha|static>",
       "reachable_from_main": true,
       "call_chain": "main -> handler -> parse -> VULN",
-      "evidence_files": ["callgraph.dot", "callgraph.svg"]
+      "evidence_files": ["callgraph.dot", "callgraph.svg"],
+      "skip_reason": "<null if ran | 'package_not_in_gomod' | 'build_failure' | 'unknown_function_signature'>"
     },
     "source_analysis": {
       "import_found": true,
@@ -209,7 +224,11 @@ Return structured result to parent command:
 - IF call graph times out → Follow fallback strategy in call-graph-analysis skill (algorithm fallback, then scope narrowing)
 
 ### Incomplete CVE Information
-- IF vulnerable function signature unknown → Skip call graph method, rely on dependency and scanner methods
+- IF vulnerable function signature unknown → Skip call graph, note `skip_reason: unknown_function_signature`, assign MEDIUM at best — do NOT assign LOW based on source analysis alone
+
+### Source Code Analysis Shows No Usage
+- This is **NOT** a valid reason to skip call graph. Proceed with Method 5.
+- Source code search misses interface dispatch, generated code, and indirect call paths.
 
 ## Integration with Parent Command
 
