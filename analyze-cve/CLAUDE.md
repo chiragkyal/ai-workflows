@@ -11,6 +11,10 @@ Exactly one of the following input modes is required:
 
 Optional flags:
 
+- **--repo=\<url-or-component\>** — Repository to analyze. Accepts:
+  - A full GitHub URL: `--repo=https://github.com/openshift/hypershift`
+  - A short component name: `--repo=hypershift` (resolved via `component-repo-mapping` skill)
+  - If omitted, the workflow checks `/workspace/repos/` first, then resolves from the Jira ticket's components (if `--jira` was used), then prompts the user.
 - **--algo** (default: `vta`): Call graph construction algorithm.
   - `vta` — Most precise, fewest false positives (recommended)
   - `rta` — Good balance of precision and speed
@@ -40,6 +44,7 @@ go install golang.org/x/tools/cmd/digraph@latest
      - IF `--jira=PROJ-NNN` provided → set `JIRA_TICKET=PROJ-NNN`, CVE-ID to be resolved in Phase 0.5
      - ELSE IF a bare `CVE-YYYY-NNNNN` token is present → set `CVE_ID` directly
      - ELSE → exit with error: "Provide either a CVE ID (e.g. CVE-2024-45338) or a Jira ticket (e.g. --jira=OCPBUGS-12345)"
+   - Extract `--repo` value if provided (optional); store as `REPO_INPUT`.
    - Extract `--algo` value if provided (optional, default: `vta`).
    - Valid `--algo` values: `vta`, `rta`, `cha`, `static`.
 
@@ -47,14 +52,14 @@ go install golang.org/x/tools/cmd/digraph@latest
 
    ```bash
    go version 2>/dev/null || echo "MISSING: go"
-   [ -f go.mod ] || echo "MISSING: go.mod"
    which govulncheck 2>/dev/null || echo "MISSING: govulncheck"
    which callgraph 2>/dev/null || echo "MISSING: callgraph"
    which digraph 2>/dev/null || echo "MISSING: digraph"
+   which git 2>/dev/null || echo "MISSING: git"
    ```
 
 3. **If ANY tool is missing** → Display installation instructions and **exit with error**.
-4. **If all tools present** → Continue to Phase 0.5 (if Jira mode) or Phase 1 (if direct CVE mode).
+4. **If all tools present** → Continue to Phase 0.5 (if Jira mode) or Phase 0.7 (if direct CVE mode).
 
 ---
 
@@ -63,12 +68,69 @@ go install golang.org/x/tools/cmd/digraph@latest
 - **Skill**: [jira-cve-extraction](skills/jira-cve-extraction/SKILL.md)
 - **References**: [`reference/jira-mcp-tools.md`](reference/jira-mcp-tools.md), [`reference/jira-cli-fallback.md`](reference/jira-cli-fallback.md)
 - **Input**: Jira ticket key from `--jira` argument
-- **Output**: Resolved `CVE_ID` + `jira_context` enrichment block
+- **Output**: Resolved `CVE_ID` + `jira_context` enrichment block (includes `components` list)
 
 **Decision Point:**
 - IF ticket not found or access denied → Exit with error
 - IF no CVE ID found in ticket → Prompt user to supply it manually; if declined → Exit
-- IF CVE ID resolved → Set `CVE_ID`, carry `jira_context` forward to Phase 3 report → Continue to Phase 1
+- IF CVE ID resolved → Set `CVE_ID`, carry `jira_context` forward → Continue to Phase 0.7
+
+---
+
+## Phase 0.7: Repository Resolution and Cloning
+
+- **Skill**: [component-repo-mapping](skills/component-repo-mapping/SKILL.md)
+- **Working directory for all subsequent phases**: `/workspace/repos/<repo-name>`
+
+### Step 1: Check for Pre-Cloned Repository
+
+```bash
+ls /workspace/repos/ 2>/dev/null
+```
+
+- IF `/workspace/repos/` contains exactly one directory → use it as `REPO_DIR`, skip to Step 3.
+- IF `/workspace/repos/` contains multiple directories → list them, ask user which to analyse.
+- IF `/workspace/repos/` is empty → continue to Step 2.
+
+### Step 2: Resolve Repository URL
+
+Determine `REPO_URL` using the first applicable source:
+
+1. `--repo` flag was provided:
+   - IF it looks like a full URL (`https://...`) → use as `REPO_URL` directly.
+   - IF it looks like a component name or short alias → run `component-repo-mapping` skill to resolve.
+2. `--jira` was used and `jira_context.components` is non-empty → run `component-repo-mapping` skill with those component names.
+3. Neither applies → prompt user: "Please provide the repository URL or component name to analyse (e.g. https://github.com/openshift/hypershift or --repo=hypershift)."
+
+**Decision Point:**
+- IF `REPO_URL` still unresolved after prompting → Exit with error.
+
+### Step 3: Clone the Repository
+
+```bash
+REPO_NAME=$(basename "${REPO_URL}" .git)
+REPO_DIR="/workspace/repos/${REPO_NAME}"
+
+if [ ! -d "${REPO_DIR}/.git" ]; then
+  echo "Cloning ${REPO_URL} into ${REPO_DIR} ..."
+  git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+else
+  echo "Repository already present at ${REPO_DIR}, pulling latest..."
+  git -C "${REPO_DIR}" pull --ff-only
+fi
+```
+
+- IF clone fails (auth error, not found) → Display error with fix instructions and Exit.
+- IF clone succeeds → set `REPO_DIR` as working directory for all subsequent phases.
+
+### Step 4: Verify Go Project
+
+```bash
+[ -f "${REPO_DIR}/go.mod" ] || echo "WARNING: no go.mod found in ${REPO_DIR}"
+```
+
+- IF `go.mod` missing → warn user; call graph and govulncheck steps will be skipped, dependency-based methods only.
+- IF `go.mod` present → Continue to Phase 1.
 
 ---
 
@@ -90,6 +152,7 @@ go install golang.org/x/tools/cmd/digraph@latest
 
 - **Skill**: [codebase-impact-analysis](skills/codebase-impact-analysis/SKILL.md)
   - Sub-skill: [call-graph-analysis](skills/call-graph-analysis/SKILL.md)
+- **Working directory**: `REPO_DIR` set in Phase 0.7 (e.g. `/workspace/repos/hypershift`)
 - **Input**: CVE profile from Phase 1, `--algo` preference
 - **Output**: Risk level (HIGH/MEDIUM/LOW/NEEDS_REVIEW), evidence package, confidence assessment
 
