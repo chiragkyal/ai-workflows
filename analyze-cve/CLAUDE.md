@@ -4,8 +4,14 @@ Perform comprehensive security vulnerability analysis for Go projects. Given a C
 
 ## Arguments
 
-- **CVE-ID** (required): The CVE identifier to analyze (format: CVE-YYYY-NNNNN, case-insensitive).
-- **--algo** (optional, default: `vta`): Call graph construction algorithm.
+Exactly one of the following input modes is required:
+
+- **CVE-ID** — Direct CVE identifier (format: `CVE-YYYY-NNNNN`, case-insensitive). Use when you already know the CVE.
+- **--jira=PROJ-NNN** — Red Hat Jira ticket key (e.g. `--jira=OCPBUGS-12345`). The workflow fetches the ticket and extracts the CVE ID from it. Use when you are starting from a Jira issue.
+
+Optional flags:
+
+- **--algo** (default: `vta`): Call graph construction algorithm.
   - `vta` — Most precise, fewest false positives (recommended)
   - `rta` — Good balance of precision and speed
   - `cha` — Fast, less precise
@@ -30,7 +36,10 @@ go install golang.org/x/tools/cmd/digraph@latest
 ## Phase 0: Setup and Tool Validation
 
 1. **Parse Arguments**
-   - Extract `<CVE-ID>` (required) from user input.
+   - Determine input mode:
+     - IF `--jira=PROJ-NNN` provided → set `JIRA_TICKET=PROJ-NNN`, CVE-ID to be resolved in Phase 0.5
+     - ELSE IF a bare `CVE-YYYY-NNNNN` token is present → set `CVE_ID` directly
+     - ELSE → exit with error: "Provide either a CVE ID (e.g. CVE-2024-45338) or a Jira ticket (e.g. --jira=OCPBUGS-12345)"
    - Extract `--algo` value if provided (optional, default: `vta`).
    - Valid `--algo` values: `vta`, `rta`, `cha`, `static`.
 
@@ -45,7 +54,21 @@ go install golang.org/x/tools/cmd/digraph@latest
    ```
 
 3. **If ANY tool is missing** → Display installation instructions and **exit with error**.
-4. **If all tools present** → Continue to Phase 1.
+4. **If all tools present** → Continue to Phase 0.5 (if Jira mode) or Phase 1 (if direct CVE mode).
+
+---
+
+## Phase 0.5: Jira CVE Extraction _(only when `--jira` is provided)_
+
+- **Skill**: [jira-cve-extraction](skills/jira-cve-extraction/SKILL.md)
+- **References**: [`reference/jira-mcp-tools.md`](reference/jira-mcp-tools.md), [`reference/jira-cli-fallback.md`](reference/jira-cli-fallback.md)
+- **Input**: Jira ticket key from `--jira` argument
+- **Output**: Resolved `CVE_ID` + `jira_context` enrichment block
+
+**Decision Point:**
+- IF ticket not found or access denied → Exit with error
+- IF no CVE ID found in ticket → Prompt user to supply it manually; if declined → Exit
+- IF CVE ID resolved → Set `CVE_ID`, carry `jira_context` forward to Phase 3 report → Continue to Phase 1
 
 ---
 
@@ -86,10 +109,11 @@ Generate analysis report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`.
 **Report structure:**
 - Executive Summary: risk level, confidence, key takeaway
 - CVE Context: vulnerability description, sources (tag verified vs user-provided)
+- Jira Context _(if `--jira` was provided)_: ticket URL, priority, status, assignee, target versions, components, internal notes, linked issues
 - Analysis Methods: what was used, why, and what was found
 - Findings: specific evidence (file paths, versions, code snippets, call chains)
-- Risk Assessment: severity + actual exposure + exploitability in this context
-- Next Steps: remediation guidance or monitoring recommendations
+- Risk Assessment: severity + actual exposure + exploitability in this context; escalate if `jira_context.analysis_hints.urgency_override` is set
+- Next Steps: remediation guidance or monitoring recommendations; note any existing workarounds from the Jira ticket
 - Sources and Limitations: tools used, gaps, analysis date
 
 **Additional artifacts** (as generated):

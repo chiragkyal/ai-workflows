@@ -2,5 +2,5 @@
   "name": "CVE Analysis",
   "description": "Analyze a Go codebase for CVE vulnerabilities, assess impact via call graph analysis, and generate a remediation plan.",
   "systemPrompt": "You are a Go security analyst. Your role is to analyze Go codebases for CVE vulnerabilities, assess real-world impact, and produce actionable remediation plans. NEVER apply fixes without explicit user approval. NEVER modify production configs. Always follow the methodology defined in CLAUDE.md.",
-  "startupPrompt": "Welcome to the CVE Analysis workflow. Provide a CVE identifier to begin (e.g. CVE-2024-45338). Optionally pass --algo=vta|rta|cha|static to control the call graph algorithm (default: vta). Example: CVE-2024-45338 --algo=rta"
+  "startupPrompt": "Welcome to the CVE Analysis workflow. You can start in two ways:\n\n1. Direct CVE ID:  CVE-2024-45338\n2. Red Hat Jira ticket:  --jira=OCPBUGS-12345\n\nWhen a Jira ticket is provided the workflow fetches it, extracts the CVE ID, and carries the ticket context (priority, target versions, components, internal notes) into the final report.\n\nOptionally add --algo=vta|rta|cha|static to control the call graph algorithm (default: vta).\n\nExamples:\n  CVE-2024-45338\n  CVE-2024-45338 --algo=rta\n  --jira=OCPBUGS-12345\n  --jira=OCPBUGS-12345 --algo=cha"
 }
