@@ -37,57 +37,24 @@ The table uses three columns:
 - **Aliases / Image Names** — additional keywords scanned in ticket summary and description
 - **GitHub Repository / Repositories**
 
-### HyperShift / Hosted Control Planes
+### Certificates
 
 | Component / Label | Aliases / Image Names | GitHub Repository |
 |---|---|---|
-| HyperShift | hypershift, hosted-control-planes, hypershift-operator | `https://github.com/openshift/hypershift` |
-| HyperShift / ROSA | rosa, hcp | `https://github.com/openshift/hypershift` |
-| control-plane-operator | control-plane-operator | `https://github.com/openshift/hypershift` |
-
-### OpenShift Control Plane
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| kube-apiserver | kube-apiserver, ose-kube-apiserver | `https://github.com/openshift/kubernetes` |
-| kube-controller-manager | kube-controller-manager | `https://github.com/openshift/kubernetes` |
-| openshift-apiserver | openshift-apiserver, ose-openshift-apiserver | `https://github.com/openshift/openshift-apiserver` |
-| cluster-config-operator | cluster-config-operator | `https://github.com/openshift/cluster-config-operator` |
-| cluster-kube-apiserver-operator | cluster-kube-apiserver-operator | `https://github.com/openshift/cluster-kube-apiserver-operator` |
-| cluster-kube-controller-manager-operator | cluster-kube-controller-manager-operator | `https://github.com/openshift/cluster-kube-controller-manager-operator` |
-| cluster-kube-scheduler-operator | cluster-kube-scheduler-operator | `https://github.com/openshift/cluster-kube-scheduler-operator` |
-| openshift-controller-manager | openshift-controller-manager | `https://github.com/openshift/openshift-controller-manager` |
-
-### Networking
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| ovn-kubernetes | ovn-kubernetes, ose-ovn-kubernetes | `https://github.com/ovn-org/ovn-kubernetes` |
-| cluster-network-operator | cluster-network-operator | `https://github.com/openshift/cluster-network-operator` |
-| sdn | sdn, ose-sdn | `https://github.com/openshift/sdn` |
-| ingress | router, ose-haproxy-router | `https://github.com/openshift/router` |
-| cluster-ingress-operator | cluster-ingress-operator | `https://github.com/openshift/cluster-ingress-operator` |
-
-### Storage
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| csi-driver-shared-resource | csi-driver-shared-resource | `https://github.com/openshift/csi-driver-shared-resource` |
-| secrets-store-csi-driver | secrets-store-csi-driver, secrets-store-csi | `https://github.com/openshift/secrets-store-csi-driver` |
-| secrets-store-csi-driver-operator | secrets-store-csi-driver-operator | `https://github.com/openshift/secrets-store-csi-driver-operator` |
-| cluster-storage-operator | cluster-storage-operator | `https://github.com/openshift/cluster-storage-operator` |
-| aws-ebs-csi-driver-operator | aws-ebs-csi-driver-operator | `https://github.com/openshift/aws-ebs-csi-driver-operator` |
-
-### Authentication / Security / Certificates
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| oauth-server | oauth-server, ose-oauth-server | `https://github.com/openshift/oauth-server` |
-| oauth-apiserver | oauth-apiserver | `https://github.com/openshift/oauth-apiserver` |
-| cluster-authentication-operator | cluster-authentication-operator | `https://github.com/openshift/cluster-authentication-operator` |
 | cert-manager | cert-manager, cert-manager-operator, ose-cert-manager | `https://github.com/openshift/cert-manager-operator` |
+
+### Secrets / CSI
+
+| Component / Label | Aliases / Image Names | GitHub Repository |
+|---|---|---|
+| secrets-store-csi-driver-operator | secrets-store-csi-driver-operator | `https://github.com/openshift/secrets-store-csi-driver-operator` |
+| secrets-store-csi-driver | secrets-store-csi-driver, secrets-store-csi | `https://github.com/openshift/secrets-store-csi-driver` |
+
+### Workload Identity
+
+| Component / Label | Aliases / Image Names | GitHub Repository |
+|---|---|---|
 | zero-trust-workload-identity-manager | zero-trust-workload-identity-manager, spire, spire-operator | `https://github.com/openshift/spire-operator` |
-| external-secrets-operator | external-secrets-operator, External Secrets Operator, ose-external-secrets-operator | `https://github.com/openshift/external-secrets-operator` |
 
 ### Operator Framework / SDK
 
@@ -96,40 +63,18 @@ The table uses three columns:
 | Operator SDK | Operator SDK, operator-sdk, operator sdk, ose-ansible, ocp-release-operator-sdk | `https://github.com/openshift/ocp-release-operator-sdk` |
 | ansible-operator-plugins | ansible-operator, ose-ansible-operator, ansible-operator-plugins | `https://github.com/openshift/ansible-operator-plugins` |
 
-### Observability / Diagnostics
+### External Secrets
+
+| Component / Label | Aliases / Image Names | GitHub Repository |
+|---|---|---|
+| external-secrets-operator | external-secrets-operator, External Secrets Operator, ose-external-secrets-operator | `https://github.com/openshift/external-secrets-operator` |
+
+### Diagnostics
 
 | Component / Label | Aliases / Image Names | GitHub Repository |
 |---|---|---|
 | must-gather | must-gather, ose-must-gather | `https://github.com/openshift/must-gather` |
 | must-gather-operator | must-gather-operator | `https://github.com/openshift/must-gather-operator` |
-
-### Cloud Providers
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| GCP / HCP on GKE | gcp-hcp, hypershift-gcp | `https://github.com/openshift/hypershift` |
-| AWS / ROSA | rosa, hypershift-aws | `https://github.com/openshift/hypershift` |
-| Azure | hypershift-azure | `https://github.com/openshift/hypershift` |
-| cluster-api | cluster-api, capi | `https://github.com/openshift/cluster-api` |
-| cluster-api-provider-aws | cluster-api-provider-aws, capa | `https://github.com/openshift/cluster-api-provider-aws` |
-| cluster-api-provider-azure | cluster-api-provider-azure, capz | `https://github.com/openshift/cluster-api-provider-azure` |
-| cluster-api-provider-gcp | cluster-api-provider-gcp, capg | `https://github.com/openshift/cluster-api-provider-gcp` |
-
-### Builds / CI
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| openshift-builds | openshift-builds, ose-builds | `https://github.com/openshift/builds` |
-| shipwright | shipwright, shipwright-build | `https://github.com/shipwright-io/build` |
-| tekton | tekton, tektoncd | `https://github.com/tektoncd/pipeline` |
-
-### Common / Shared Libraries
-
-| Component / Label | Aliases / Image Names | GitHub Repository |
-|---|---|---|
-| library-go | library-go | `https://github.com/openshift/library-go` |
-| api | openshift-api, ose-api | `https://github.com/openshift/api` |
-| client-go | openshift-client-go | `https://github.com/openshift/client-go` |
 
 ---
 
