@@ -82,7 +82,6 @@ The `cert-manager` namespace spans **three** repositories — match on the full 
 | `openshift4/ose-helm-operator` | `https://github.com/openshift/ocp-release-operator-sdk` |
 | `openshift4/ose-helm-rhel9-operator` | `https://github.com/openshift/ocp-release-operator-sdk` |
 | `openshift-enterprise-helm-operator-container` | `https://github.com/openshift/ocp-release-operator-sdk` |
-| `operator-registry-container` | `https://github.com/openshift/ocp-release-operator-sdk` |
 | `pkg:oci/ose-operator-sdk-rhel8` | `https://github.com/openshift/ocp-release-operator-sdk` |
 | `pkg:oci/ose-operator-sdk-rhel9` | `https://github.com/openshift/ocp-release-operator-sdk` |
 | `pkg:oci/ose-helm-operator` | `https://github.com/openshift/ocp-release-operator-sdk` |
@@ -95,7 +94,6 @@ The `cert-manager` namespace spans **three** repositories — match on the full 
 | Image Name / Prefix | GitHub Repository |
 |---|---|
 | `ansible-operator-plugins` | `https://github.com/openshift/ansible-operator-plugins` |
-| `ansible-runner` | `https://github.com/openshift/ansible-operator-plugins` |
 | `openshift4/ose-ansible-operator` | `https://github.com/openshift/ansible-operator-plugins` |
 | `openshift4/ose-ansible-rhel9-operator` | `https://github.com/openshift/ansible-operator-plugins` |
 | `openshift-enterprise-ansible-operator-container` | `https://github.com/openshift/ansible-operator-plugins` |
@@ -108,18 +106,33 @@ The `cert-manager` namespace spans **three** repositories — match on the full 
 
 ### External Secrets Operator
 
+The `external-secrets-operator` namespace spans **three** repositories — match on the full image name.
+
+#### external-secrets-operator (operator + bundle)
+
 | Image Name / Prefix | GitHub Repository |
 |---|---|
 | `external-secrets-operator/external-secrets-operator-rhel9` | `https://github.com/openshift/external-secrets-operator` |
-| `external-secrets-operator/external-secrets-rhel9` | `https://github.com/openshift/external-secrets-operator` |
 | `external-secrets-operator/external-secrets-operator-bundle` | `https://github.com/openshift/external-secrets-operator` |
-| `external-secrets-operator/bitwarden-sdk-server-rhel9` | `https://github.com/openshift/external-secrets-operator` |
-| `redhat-user-workloads/external-secrets-1-0` | `https://github.com/openshift/external-secrets-operator` |
 | `redhat-user-workloads/external-secrets-operator-1-0` | `https://github.com/openshift/external-secrets-operator` |
 | `redhat-user-workloads/external-secrets-operator-bundle-1-0` | `https://github.com/openshift/external-secrets-operator` |
-| `redhat-user-workloads/bitwarden-sdk-server-1-0` | `https://github.com/openshift/external-secrets-operator` |
 
-**Namespace prefix match:** `external-secrets-operator` → `https://github.com/openshift/external-secrets-operator`
+#### external-secrets
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `external-secrets-operator/external-secrets-rhel9` | `https://github.com/openshift/external-secrets` |
+| `redhat-user-workloads/external-secrets-1-0` | `https://github.com/openshift/external-secrets` |
+
+#### external-secrets-bitwarden-sdk-server
+
+| Image Name / Prefix | GitHub Repository |
+|---|---|
+| `external-secrets-operator/bitwarden-sdk-server-rhel9` | `https://github.com/openshift/external-secrets-bitwarden-sdk-server` |
+| `redhat-user-workloads/bitwarden-sdk-server-1-0` | `https://github.com/openshift/external-secrets-bitwarden-sdk-server` |
+
+**Namespace prefix match:** `external-secrets-operator` → requires full image name lookup above (multiple repos in this namespace).  
+**Keyword match:** `external-secrets-operator` / `external-secrets-operator-bundle` → `external-secrets-operator`; `bitwarden-sdk-server` → `external-secrets-bitwarden-sdk-server`; `external-secrets-rhel9` / `external-secrets-1-0` → `external-secrets`.
 
 ---
 
