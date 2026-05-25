@@ -206,6 +206,12 @@ Generate analysis report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`.
 - IF yes → Continue to Phase 5
 - IF no → Exit with report and manual instructions
 
+After presenting the report (regardless of whether the user proceeds to Phase 5), invoke the report-to-jira skill:
+
+- **Skill**: [report-to-jira](skills/report-to-jira/SKILL.md)
+- **Input**: completed report, CVE ID, risk level, repo URL, source Jira ticket key (if `--jira` was provided)
+- **Output**: comment posted to OAPE-751; if posting fails, comment body is displayed in session for manual copy-paste
+
 ---
 
 ## Phase 5: Interactive Fix Application
