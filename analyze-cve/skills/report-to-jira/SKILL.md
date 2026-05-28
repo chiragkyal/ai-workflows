@@ -152,6 +152,58 @@ Do not retry more than once. On failure, display the comment body in the session
 
 ---
 
+## Step 4.5: Mark Source Ticket as Processed
+
+After a **successful** comment post (Step 3), add the label **`ai-cve-analyzed`** to the source Jira ticket (the `--jira=` ticket, e.g. `OCPBUGS-12345`) to prevent redundant re-processing on future runs.
+
+**Only run this step if:**
+- Step 3 succeeded (comment posted to OAPE-751)
+- A source Jira ticket key is available (`--jira` was provided)
+
+**Do NOT run if:**
+- Step 3 failed
+- No source ticket (direct CVE mode — no Jira ticket to label)
+
+### Label update procedure
+
+Jira replaces the entire labels list on update, so existing labels must be preserved:
+
+```python
+# 1. Read current labels from the already-fetched jira_context
+current_labels = jira_context["labels"]   # list from jira-cve-extraction output
+
+# 2. Append marker (guard against duplicates)
+if "ai-cve-analyzed" not in current_labels:
+    new_labels = current_labels + ["ai-cve-analyzed"]
+else:
+    new_labels = current_labels   # already present, nothing to do
+
+# 3. Write back
+mcp__atlassian__jira_update_issue(
+    issue_key="<JIRA_KEY>",
+    fields={},
+    additional_fields={
+        "labels": new_labels
+    }
+)
+```
+
+**Fallback — jira-cli** (if MCP tool unavailable):
+
+```bash
+# jira-cli label add appends without overwriting
+jira issue edit <JIRA_KEY> --label "ai-cve-analyzed" --no-input
+```
+
+**On failure:** log a warning but do not fail the overall skill — the report was already posted successfully. Output:
+
+```
+⚠️ Report posted to OAPE-751 successfully, but could not add 'ai-cve-analyzed' label to <JIRA_KEY>.
+   Please add it manually to prevent re-processing.
+```
+
+---
+
 ## Return Value
 
 **Success:**
