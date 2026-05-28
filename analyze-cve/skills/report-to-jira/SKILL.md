@@ -23,6 +23,29 @@ If the report is incomplete or Phase 4 did not finish, do not post — return `s
 
 ---
 
+## Step 1.5: Resolve the Session URL
+
+Ambient injects the current session URL as an environment variable. Run:
+
+```bash
+echo "${AMBIENT_SESSION_URL:-}"
+echo "${SESSION_URL:-}"
+echo "${AMBIENT_SESSION_ID:-}"
+```
+
+Build `SESSION_URL` using the first value found:
+
+| Variable present | Value to use |
+|---|---|
+| `AMBIENT_SESSION_URL` | Use directly |
+| `SESSION_URL` | Use directly |
+| `AMBIENT_SESSION_ID` | Construct: `${AMBIENT_BASE_URL}/sessions/${AMBIENT_SESSION_ID}` |
+| None found | Leave blank — omit session link from comment gracefully |
+
+Store as `SESSION_URL` (or empty string). This is used in Step 2.
+
+---
+
 ## Step 2: Build the Comment Body
 
 Convert the full Phase 3 report to Jira wiki markup and post it in its entirety. Do not summarise — the full report is the comment.
@@ -49,10 +72,15 @@ Prepend the following attribution header before the converted report:
 ⚠️ *This analysis was performed automatically by the CVE Analysis AI Workflow.*
 _Results should be reviewed by a human before acting on remediation steps._
 _Workflow: [analyze-cve|https://github.com/chiragkyal/ai-workflows/tree/main/analyze-cve]_
+<IF SESSION_URL is non-empty:>
+_Session: [View full session transcript|<SESSION_URL>]_
+</IF>
 
 ----
 
 ```
+
+If `SESSION_URL` is empty, omit the `_Session:_` line entirely — do not print a blank line in its place.
 
 ### Size limit handling
 
@@ -106,6 +134,7 @@ After posting, output to the session:
    CVE:        <CVE_ID>
    Risk level: <level>
    Repository: <repo_url>
+   Session:    <SESSION_URL or "(not available)">
 ```
 
 If the post fails:
@@ -134,7 +163,8 @@ Do not retry more than once. On failure, display the comment body in the session
   "ticket_url": "https://redhat.atlassian.net/browse/OAPE-751",
   "cve_id": "<CVE_ID>",
   "risk_level": "<HIGH|MEDIUM|LOW|NEEDS_REVIEW>",
-  "method": "mcp"
+  "method": "mcp | jira-cli",
+  "session_url": "<SESSION_URL or null>"
 }
 ```
 
