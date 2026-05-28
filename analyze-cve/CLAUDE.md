@@ -133,7 +133,8 @@ Use `BRANCH` extracted by `jira-cve-extraction` (e.g. `openshift-4.17`, `ztwim-1
 | `openshift-X.Y.z` | (same Pattern A components) | `release-X.Y.z` |
 | `cert-manager-X-Y` | cert-manager (Pattern B release repo) | `release-X.Y` |
 | `external-secrets-X-Y` | ESO (Pattern B release repo) | `release-X.Y` |
-| `ztwim-X.Y` | ZTWIM (Pattern B release repo) | `release-X.Y` |
+| `ztwim-1.0` | ZTWIM (Pattern B release repo) | `release-1.0.0` _(one-time exception; future releases use `release-X.Y`)_ |
+| `ztwim-X.Y` (any other) | ZTWIM (Pattern B release repo) | `release-X.Y` |
 | Any other value | Use verbatim |
 
 **Verify the branch exists before cloning:**

@@ -94,7 +94,8 @@ git clone --depth=1 --branch "${COMPONENT_TAG}" "${COMPONENT_URL}" "${REPO_DIR}"
 |---|---|
 | `cert-manager-X-Y` | `release-X.Y` in `cert-manager-operator-release` |
 | `external-secrets-X-Y` | `release-X.Y` in `external-secrets-operator-release` |
-| `ztwim-X.Y` | `release-X.Y` in `zero-trust-workload-identity-manager-release` |
+| `ztwim-1.0` | **`release-1.0.0`** in `zero-trust-workload-identity-manager-release` _(one-time exception — team confirmed this was a branching mistake; future releases use `release-X.Y`)_ |
+| `ztwim-X.Y` (any other) | `release-X.Y` in `zero-trust-workload-identity-manager-release` |
 
 > **Note:** Jira branch values use hyphens for separators (e.g. `external-secrets-1-0`) while release branches use dots (e.g. `release-1.0`). Strip the component prefix and convert the remaining hyphen-separated version to dot notation.
 
