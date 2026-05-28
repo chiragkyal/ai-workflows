@@ -164,21 +164,26 @@ After a **successful** comment post (Step 3), add the label **`ai-cve-analyzed`*
 - Step 3 failed
 - No source ticket (direct CVE mode — no Jira ticket to label)
 
-### Label update procedure
+### ⚠️ CRITICAL: Existing labels MUST be preserved
 
-Jira replaces the entire labels list on update, so existing labels must be preserved:
+Jira's update API **replaces** the entire label list — it does not append. Sending only `["ai-cve-analyzed"]` will **delete all existing labels** on the ticket. This is a destructive operation and must never happen.
+
+**Before writing, always:**
+1. Take the full `labels` list already captured in `jira_context["labels"]` (fetched in Phase 0.5 — no extra API call needed)
+2. Append `ai-cve-analyzed` to that list
+3. Write the combined list back
 
 ```python
-# 1. Read current labels from the already-fetched jira_context
-current_labels = jira_context["labels"]   # list from jira-cve-extraction output
+# 1. Take the labels captured during Phase 0.5 — never start from an empty list
+current_labels = jira_context["labels"]   # e.g. ["CVE-2026-34986", "SecurityTracking", "pscomponent:..."]
 
-# 2. Append marker (guard against duplicates)
+# 2. Append only if not already present
 if "ai-cve-analyzed" not in current_labels:
     new_labels = current_labels + ["ai-cve-analyzed"]
 else:
-    new_labels = current_labels   # already present, nothing to do
+    new_labels = current_labels   # already marked — nothing to write
 
-# 3. Write back
+# 3. Write the FULL list back
 mcp__atlassian__jira_update_issue(
     issue_key="<JIRA_KEY>",
     fields={},
@@ -191,15 +196,47 @@ mcp__atlassian__jira_update_issue(
 **Fallback — jira-cli** (if MCP tool unavailable):
 
 ```bash
-# jira-cli label add appends without overwriting
+# jira-cli --label appends without replacing — safe to use directly
 jira issue edit <JIRA_KEY> --label "ai-cve-analyzed" --no-input
 ```
 
-**On failure:** log a warning but do not fail the overall skill — the report was already posted successfully. Output:
+### Verification (mandatory)
+
+After the update call, re-fetch the ticket labels and confirm:
+
+```python
+updated = mcp__atlassian__jira_get_issue(issue_key="<JIRA_KEY>", fields="labels")
+updated_labels = updated["fields"]["labels"]
+
+# Check 1: new label was added
+assert "ai-cve-analyzed" in updated_labels, "New label missing"
+
+# Check 2: all original labels are still present
+for label in current_labels:
+    assert label in updated_labels, f"LABEL LOST: {label}"
+```
+
+**If Check 1 fails (new label missing):** log a warning — non-fatal. The report is already posted.
 
 ```
-⚠️ Report posted to OAPE-751 successfully, but could not add 'ai-cve-analyzed' label to <JIRA_KEY>.
-   Please add it manually to prevent re-processing.
+⚠️ Could not add 'ai-cve-analyzed' label to <JIRA_KEY>. Add it manually to prevent re-processing.
+```
+
+**If Check 2 fails (existing label lost):** this is a data integrity error. Log a critical error and output the original label list so the user can restore it:
+
+```
+❌ LABEL INTEGRITY ERROR on <JIRA_KEY>
+   The following labels were present before the update but are now missing:
+   <list of lost labels>
+
+   Original full label list (restore manually):
+   <current_labels>
+```
+
+**If both checks pass:**
+
+```
+✅ Label 'ai-cve-analyzed' added to <JIRA_KEY>. Labels verified intact.
 ```
 
 ---
