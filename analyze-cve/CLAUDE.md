@@ -296,7 +296,7 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 
 - **Skill**: [report-to-jira](skills/report-to-jira/SKILL.md)
 - **Input**: completed report, CVE ID, risk level, repo URL, source Jira ticket key (if `--jira` was provided)
-- **Output**: comment posted to OAPE-751; if posting fails, comment body is displayed in session for manual copy-paste
+- **Output**: comment and label posted to `SOURCE_TICKET` (the same ticket the CVE details were read from); skipped silently if no `--jira` was provided; if posting fails, comment body is displayed in session for manual copy-paste
 
 ---
 

@@ -1,11 +1,11 @@
 ---
 name: report-to-jira
-description: Post the final CVE analysis report as a comment on the OAPE-751 Jira ticket, prefixed with an AI workflow attribution header
+description: Post the final CVE analysis report as a comment on the source Jira ticket, prefixed with an AI workflow attribution header
 ---
 
 # Report to Jira
 
-Posts the completed CVE analysis report as a comment on **OAPE-751** in the Red Hat Jira instance (`redhat.atlassian.net`). Always called as the last step of Phase 4, after the report has been generated.
+Posts the completed CVE analysis report as a comment on the **source Jira ticket** — the same ticket the CVE details were read from (passed via `--jira=`, e.g. `OCPBUGS-12345`). The comment and label always go back to this one ticket. Always called as the last step of Phase 4, after the report has been generated.
 
 ---
 
@@ -15,11 +15,13 @@ Before posting, verify that the following are available from the parent workflow
 
 - Final report content (full markdown from Phase 4)
 - CVE ID (e.g. `CVE-2024-45338`)
-- Source Jira ticket key, if analysis was triggered via `--jira=` (e.g. `OCPBUGS-12345`)
+- **`SOURCE_TICKET`** — the Jira ticket key from `--jira=` (e.g. `OCPBUGS-12345`). This is the only ticket this skill will write to.
 - Risk level (`HIGH` / `MEDIUM` / `LOW` / `NEEDS_REVIEW`)
 - Repository analysed (e.g. `https://github.com/openshift/spire-operator`)
 
-If the report is incomplete or Phase 4 did not finish, do not post — return `status: skipped` with reason.
+**If `SOURCE_TICKET` is not available** (direct CVE mode — no `--jira` was provided): return `status: skipped` with reason `"no_source_ticket"`. There is no Jira ticket to post to.
+
+If the report is incomplete or Phase 4 did not finish, return `status: skipped` with reason.
 
 ---
 
@@ -102,11 +104,13 @@ Jira comment bodies are capped at **32,767 characters**. Measure the full conver
 
 ## Step 3: Post the Comment
 
+Post to `SOURCE_TICKET` — the ticket the CVE details were read from.
+
 **Primary — MCP tool:**
 
 ```python
 mcp__atlassian__jira_add_issue_comment(
-    issue_key="OAPE-751",
+    issue_key=SOURCE_TICKET,       # e.g. "OCPBUGS-12345"
     comment_body="<constructed comment from Step 2>"
 )
 ```
@@ -114,7 +118,7 @@ mcp__atlassian__jira_add_issue_comment(
 **Fallback — jira-cli** (if MCP tool is unavailable):
 
 ```bash
-jira issue comment add OAPE-751 \
+jira issue comment add "${SOURCE_TICKET}" \
   --body "$(cat /tmp/cve-report-comment.txt)" \
   --no-input
 ```
@@ -128,8 +132,8 @@ Write the comment body to `/tmp/cve-report-comment.txt` before running the fallb
 After posting, output to the session:
 
 ```
-✅ Report posted to OAPE-751
-   https://redhat.atlassian.net/browse/OAPE-751
+✅ Report posted to <SOURCE_TICKET>
+   https://redhat.atlassian.net/browse/<SOURCE_TICKET>
 
    CVE:        <CVE_ID>
    Risk level: <level>
@@ -140,12 +144,12 @@ After posting, output to the session:
 If the post fails:
 
 ```
-❌ Failed to post report to OAPE-751
+❌ Failed to post report to <SOURCE_TICKET>
    Error: <error message>
 
    The full report has been displayed above. Please copy and paste it
-   into OAPE-751 manually:
-   https://redhat.atlassian.net/browse/OAPE-751
+   into <SOURCE_TICKET> manually:
+   https://redhat.atlassian.net/browse/<SOURCE_TICKET>
 ```
 
 Do not retry more than once. On failure, display the comment body in the session so the user can post it manually.
@@ -154,15 +158,13 @@ Do not retry more than once. On failure, display the comment body in the session
 
 ## Step 4.5: Mark Source Ticket as Processed
 
-After a **successful** comment post (Step 3), add the label **`ai-cve-analyzed`** to the source Jira ticket (the `--jira=` ticket, e.g. `OCPBUGS-12345`) to prevent redundant re-processing on future runs.
+Add the label **`ai-cve-analyzed`** to `SOURCE_TICKET` to prevent redundant re-processing on future runs.
 
-**Only run this step if:**
-- Step 3 succeeded (comment posted to OAPE-751)
-- A source Jira ticket key is available (`--jira` was provided)
+**Only run this step if Step 3 succeeded.** The label confirms the full workflow completed — comment posted AND analysis done. If Step 3 failed for any reason (MCP error, jira-cli not found, network issue), **skip this step entirely**. Do not add the label to a ticket that did not receive the comment.
 
 **Do NOT run if:**
-- Step 3 failed
-- No source ticket (direct CVE mode — no Jira ticket to label)
+- Step 3 failed or was skipped for any reason
+- `SOURCE_TICKET` is not set (direct CVE mode — no Jira ticket)
 
 ### ⚠️ CRITICAL: Existing labels MUST be preserved
 
@@ -185,7 +187,7 @@ else:
 
 # 3. Write the FULL list back
 mcp__atlassian__jira_update_issue(
-    issue_key="<JIRA_KEY>",
+    issue_key=SOURCE_TICKET,
     fields={},
     additional_fields={
         "labels": new_labels
@@ -197,7 +199,7 @@ mcp__atlassian__jira_update_issue(
 
 ```bash
 # jira-cli --label appends without replacing — safe to use directly
-jira issue edit <JIRA_KEY> --label "ai-cve-analyzed" --no-input
+jira issue edit "${SOURCE_TICKET}" --label "ai-cve-analyzed" --no-input
 ```
 
 ### Verification (mandatory)
@@ -205,7 +207,7 @@ jira issue edit <JIRA_KEY> --label "ai-cve-analyzed" --no-input
 After the update call, re-fetch the ticket labels and confirm:
 
 ```python
-updated = mcp__atlassian__jira_get_issue(issue_key="<JIRA_KEY>", fields="labels")
+updated = mcp__atlassian__jira_get_issue(issue_key=SOURCE_TICKET, fields="labels")
 updated_labels = updated["fields"]["labels"]
 
 # Check 1: new label was added
@@ -219,13 +221,13 @@ for label in current_labels:
 **If Check 1 fails (new label missing):** log a warning — non-fatal. The report is already posted.
 
 ```
-⚠️ Could not add 'ai-cve-analyzed' label to <JIRA_KEY>. Add it manually to prevent re-processing.
+⚠️ Could not add 'ai-cve-analyzed' label to <SOURCE_TICKET>. Add it manually to prevent re-processing.
 ```
 
 **If Check 2 fails (existing label lost):** this is a data integrity error. Log a critical error and output the original label list so the user can restore it:
 
 ```
-❌ LABEL INTEGRITY ERROR on <JIRA_KEY>
+❌ LABEL INTEGRITY ERROR on <SOURCE_TICKET>
    The following labels were present before the update but are now missing:
    <list of lost labels>
 
@@ -236,7 +238,7 @@ for label in current_labels:
 **If both checks pass:**
 
 ```
-✅ Label 'ai-cve-analyzed' added to <JIRA_KEY>. Labels verified intact.
+✅ Label 'ai-cve-analyzed' added to <SOURCE_TICKET>. Labels verified intact.
 ```
 
 ---
@@ -248,8 +250,8 @@ for label in current_labels:
 {
   "skill": "report-to-jira",
   "status": "success",
-  "target_ticket": "OAPE-751",
-  "ticket_url": "https://redhat.atlassian.net/browse/OAPE-751",
+  "source_ticket": "<SOURCE_TICKET e.g. OCPBUGS-12345>",
+  "ticket_url": "https://redhat.atlassian.net/browse/<SOURCE_TICKET>",
   "cve_id": "<CVE_ID>",
   "risk_level": "<HIGH|MEDIUM|LOW|NEEDS_REVIEW>",
   "method": "mcp | jira-cli",
@@ -262,7 +264,7 @@ for label in current_labels:
 {
   "skill": "report-to-jira",
   "status": "skipped",
-  "reason": "<report incomplete | phase 4 did not finish>"
+  "reason": "<no_source_ticket | report incomplete | phase 4 did not finish>"
 }
 ```
 
@@ -271,7 +273,7 @@ for label in current_labels:
 {
   "skill": "report-to-jira",
   "status": "failed",
-  "target_ticket": "OAPE-751",
+  "source_ticket": "<SOURCE_TICKET>",
   "error": "<error message>",
   "fallback": "comment body displayed in session for manual posting"
 }
@@ -283,5 +285,5 @@ for label in current_labels:
 
 Called from **Phase 4** of the CVE Analysis workflow (see `CLAUDE.md`) as the final step, after the report has been fully generated.
 
-**Input:** complete report content, CVE ID, risk level, repo URL, optional source Jira ticket key  
-**Output:** confirmation of comment posted to OAPE-751, or failure message with comment body for manual posting
+**Input:** complete report content, CVE ID, risk level, repo URL, `SOURCE_TICKET` (Jira ticket key from `--jira=` — the same ticket the CVE details were read from)  
+**Output:** confirmation of comment and label posted to `SOURCE_TICKET`, or `status: skipped` if no source ticket was provided, or failure message with comment body for manual posting
