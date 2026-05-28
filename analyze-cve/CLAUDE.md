@@ -151,7 +151,13 @@ git ls-remote --heads "${REPO_URL}" "${GIT_BRANCH}" | grep -q "${GIT_BRANCH}"
 
 ```bash
 # Clone release repo (shallow, no submodule content needed)
-git clone --depth=1 -b "${GIT_BRANCH}" "${RELEASE_REPO_URL}" /tmp/release-repo
+echo "Cloning release repo ${RELEASE_REPO_URL} @ ${GIT_BRANCH} ..."
+timeout 120 git clone --depth=1 -b "${GIT_BRANCH}" "${RELEASE_REPO_URL}" /tmp/release-repo
+if [ $? -eq 124 ]; then
+  echo "ERROR: release repo clone timed out after 120s"
+  exit 1
+fi
+echo "✓ Release repo cloned"
 
 # Print .gitmodules so the model can parse it
 cat /tmp/release-repo/.gitmodules
@@ -173,24 +179,41 @@ REPO_DIR="/workspace/repos/${REPO_NAME}"
 if [ ! -d "${REPO_DIR}/.git" ]; then
   echo "Cloning ${REPO_URL} (branch: ${GIT_BRANCH:-default}) into ${REPO_DIR} ..."
   if [ -n "${GIT_BRANCH}" ]; then
-    git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+    timeout 300 git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
   else
-    git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+    timeout 300 git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+  fi
+  CLONE_EXIT=$?
+  if [ $CLONE_EXIT -eq 124 ]; then
+    echo "ERROR: git clone timed out after 300s for ${REPO_URL}"
+    echo "The repository may be too large or the network too slow."
+    echo "Try again or provide a pre-cloned repo in /workspace/repos/"
+    exit 1
+  elif [ $CLONE_EXIT -ne 0 ]; then
+    echo "ERROR: git clone failed (exit ${CLONE_EXIT}) for ${REPO_URL}"
+    exit 1
   fi
 else
   CURRENT_BRANCH=$(git -C "${REPO_DIR}" rev-parse --abbrev-ref HEAD)
   if [ -n "${GIT_BRANCH}" ] && [ "${CURRENT_BRANCH}" != "${GIT_BRANCH}" ]; then
     echo "Switching from ${CURRENT_BRANCH} to ${GIT_BRANCH} ..."
-    git -C "${REPO_DIR}" fetch origin "${GIT_BRANCH}"
+    timeout 120 git -C "${REPO_DIR}" fetch origin "${GIT_BRANCH}"
     git -C "${REPO_DIR}" checkout "${GIT_BRANCH}"
   fi
-  git -C "${REPO_DIR}" pull --ff-only
+  timeout 120 git -C "${REPO_DIR}" pull --ff-only
 fi
+
+# Explicit verification — always print this so it's visible in the session
+echo "✓ Repository ready: ${REPO_DIR}"
+echo "  Branch : $(git -C "${REPO_DIR}" rev-parse --abbrev-ref HEAD)"
+echo "  Commit : $(git -C "${REPO_DIR}" rev-parse --short HEAD)"
+echo "  go.mod : $([ -f "${REPO_DIR}/go.mod" ] && echo 'present' || echo 'MISSING')"
 ```
 
-- IF clone fails (auth error, not found, branch missing) → Display error with fix instructions and Exit.
-- IF clone succeeds → set `REPO_DIR` and `GIT_BRANCH` as working context for all subsequent phases.
-- Always confirm the checked-out branch in the session output: `✓ Cloned <REPO_URL> @ <GIT_BRANCH>`
+- IF clone times out → exit with instructions to pre-clone or retry.
+- IF clone fails → exit with error details.
+- IF clone succeeds → `REPO_DIR` and `GIT_BRANCH` are set as working context for all subsequent phases.
+- The verification block at the end **must always print** — this confirms to the user that the repo is ready and is visible in the session context.
 
 ### Step 4: Verify Go Project
 

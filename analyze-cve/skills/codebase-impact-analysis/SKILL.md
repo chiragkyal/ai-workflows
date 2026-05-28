@@ -72,9 +72,20 @@ go list -m <vulnerable-package>
 #### Method 2: Go Vulnerability Scanner
 
 ```bash
-# Run official Go vulnerability scanner
-govulncheck ./...
+# Run with a hard timeout — govulncheck downloads the vuln DB and scans
+# all packages; on large repos or slow connections it can run indefinitely.
+timeout 300 govulncheck ./... 2>&1
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 124 ]; then
+  echo "govulncheck timed out after 300s — skipping scanner, continuing with manual methods"
+fi
 ```
+
+**Timeout handling:**
+- `timeout 300` kills the process after 5 minutes and returns exit code 124
+- IF timed out → note "govulncheck skipped (timeout)" in evidence, continue to Method 3
+- Do NOT block the analysis on govulncheck — it is one signal, not the only one
 
 - Parse output for CVE matches
 - Check if vulnerable symbols are reported as called
@@ -82,6 +93,7 @@ govulncheck ./...
 **Decision Point:**
 - IF govulncheck confirms vulnerability → Strong evidence for HIGH RISK
 - IF govulncheck does not find it → Continue to Method 3 (CVE may not be in Go vulndb yet)
+- IF govulncheck timed out → Continue to Method 3; note the gap in the report
 
 #### Method 3: Direct Dependency Check
 
