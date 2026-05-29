@@ -71,29 +71,50 @@ go list -m <vulnerable-package>
 
 #### Method 2: Go Vulnerability Scanner
 
-```bash
-# Run with a hard timeout — govulncheck downloads the vuln DB and scans
-# all packages; on large repos or slow connections it can run indefinitely.
-timeout 300 govulncheck ./... 2>&1
-EXIT_CODE=$?
+Run in two phases. Always write output to a file — **never pipe govulncheck to `head` or any other command**. Piping causes govulncheck to hang waiting to write after the reader closes (SIGPIPE).
 
-if [ $EXIT_CODE -eq 124 ]; then
-  echo "govulncheck timed out after 300s — skipping scanner, continuing with manual methods"
+**Phase 2a — Module-level scan (always run first, fast)**
+
+Checks go.mod only. Completes in seconds regardless of repo size.
+
+```bash
+echo "=== govulncheck module scan ==="
+timeout 60 govulncheck -scan=module ./... > /tmp/govulncheck-module.txt 2>&1
+MODULE_EXIT=$?
+cat /tmp/govulncheck-module.txt
+
+if [ $MODULE_EXIT -eq 124 ]; then
+  echo "govulncheck module scan timed out — skipping scanner entirely"
 fi
 ```
 
-**Timeout handling:**
-- `timeout 300` kills the process after 5 minutes and returns exit code 124
-- IF timed out → note "govulncheck skipped (timeout)" in evidence, continue to Method 3
-- Do NOT block the analysis on govulncheck — it is one signal, not the only one
+- IF the vulnerable package appears in output → proceed to Phase 2b
+- IF the vulnerable package is absent → package not in module graph; note as LOW signal; skip Phase 2b
+- IF timed out → skip Phase 2b; note gap
 
-- Parse output for CVE matches
-- Check if vulnerable symbols are reported as called
+**Phase 2b — Source-level scan (only if Phase 2a confirms package is present)**
+
+Full symbol-level analysis. Can be slow on large repos (e.g. spiffe-spire, cert-manager).
+
+```bash
+echo "=== govulncheck source scan ==="
+timeout 300 govulncheck -format text ./... > /tmp/govulncheck-source.txt 2>&1
+SOURCE_EXIT=$?
+cat /tmp/govulncheck-source.txt
+
+if [ $SOURCE_EXIT -eq 124 ]; then
+  echo "govulncheck source scan timed out after 300s — relying on manual methods"
+fi
+```
+
+- IF timed out (exit 124) → note "govulncheck source scan skipped (timeout)" in evidence; continue to Method 3
+- Do NOT re-run or increase timeout — govulncheck is one signal, not the only one
+- Save `/tmp/govulncheck-source.txt` as a workflow artifact
 
 **Decision Point:**
-- IF govulncheck confirms vulnerability → Strong evidence for HIGH RISK
-- IF govulncheck does not find it → Continue to Method 3 (CVE may not be in Go vulndb yet)
-- IF govulncheck timed out → Continue to Method 3; note the gap in the report
+- IF source scan confirms vulnerable symbols called → Strong evidence for HIGH RISK
+- IF source scan finds no vulnerable symbols → Continue to Method 3 (CVE may not be in Go vulndb yet)
+- IF source scan timed out or was skipped → Continue to Method 3; note the gap in the report
 
 #### Method 3: Direct Dependency Check
 
