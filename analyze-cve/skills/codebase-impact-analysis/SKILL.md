@@ -72,59 +72,50 @@ go list -m <vulnerable-package>
 #### Method 2: Go Vulnerability Scanner
 
 > **CRITICAL RULES — read before running anything:**
-> 1. **Run govulncheck AT MOST ONCE per phase.** If `/tmp/govulncheck-module.txt` or `/tmp/govulncheck-source.txt` already exist and are non-empty, use those files. Do NOT re-run govulncheck.
+> 1. **Run govulncheck AT MOST ONCE.** If `/tmp/govulncheck-source.txt` already exists and is non-empty, use that file directly. Do NOT re-run govulncheck.
 > 2. **Never pipe govulncheck to `head`, `tail`, or any other command.** Always redirect to a file. Piping causes govulncheck to hang (SIGPIPE) when the reader closes.
 > 3. **"No findings" is a valid and final result** — it means the CVE is not yet in the Go vuln database. Immediately proceed to Method 3. Do NOT re-run in a different mode or format to double-check.
+> 4. **Do NOT use `-scan=module`** — this flag does not accept file patterns and its error messages will cause unnecessary retries. Use the go.mod grep check in Step 2a instead.
 
-**Phase 2a — Module-level scan (always run first, fast)**
+**Step 2a — Quick go.mod check (replaces module scan, instant)**
 
-Checks go.mod only. Completes in seconds regardless of repo size.
+Before running the full scan, grep go.mod for the vulnerable package. This avoids a 300s timeout on repos that don't even use the package.
 
 ```bash
-# Only run if output file does not already exist
-if [ ! -s /tmp/govulncheck-module.txt ]; then
-  echo "=== govulncheck module scan ==="
-  timeout 60 govulncheck -scan=module ./... > /tmp/govulncheck-module.txt 2>&1
-  MODULE_EXIT=$?
-  if [ $MODULE_EXIT -eq 124 ]; then
-    echo "govulncheck module scan timed out — skipping scanner entirely"
-  fi
-else
-  echo "=== govulncheck module scan (using cached result) ==="
-fi
-cat /tmp/govulncheck-module.txt
+VULN_PKG="google.golang.org/grpc"   # replace with actual vulnerable package
+echo "=== go.mod check for ${VULN_PKG} ==="
+grep "${VULN_PKG}" "${REPO_DIR}/go.mod" && echo "FOUND in go.mod" || echo "NOT FOUND in go.mod"
 ```
 
-- IF the vulnerable package appears in output → proceed to Phase 2b
-- IF the vulnerable package is absent → record "package not in module graph" as LOW signal; **skip Phase 2b immediately**; proceed to Method 3
-- IF timed out → skip Phase 2b; note gap; proceed to Method 3
+- IF **NOT FOUND** in go.mod → record "package not in module graph" as LOW signal; **skip Step 2b**; proceed to Method 3
+- IF **FOUND** → note the version; proceed to Step 2b
 
-**Phase 2b — Source-level scan (only if Phase 2a confirms package is present)**
-
-Full symbol-level analysis. Can be slow on large repos (e.g. spiffe-spire, cert-manager).
+**Step 2b — Full source scan (only if Step 2a confirms package present)**
 
 ```bash
-# Only run if output file does not already exist
+cd "${REPO_DIR}"
+
 if [ ! -s /tmp/govulncheck-source.txt ]; then
   echo "=== govulncheck source scan ==="
   timeout 300 govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
   SOURCE_EXIT=$?
   if [ $SOURCE_EXIT -eq 124 ]; then
-    echo "govulncheck source scan timed out after 300s — relying on manual methods"
+    echo "govulncheck timed out after 300s — relying on manual methods"
   fi
+  echo "govulncheck exit code: ${SOURCE_EXIT}"
 else
-  echo "=== govulncheck source scan (using cached result) ==="
+  echo "=== govulncheck (using cached result) ==="
 fi
 cat /tmp/govulncheck-source.txt
 ```
 
-- IF timed out (exit 124) → note "govulncheck source scan skipped (timeout)" in evidence; **proceed to Method 3 immediately**
+- IF timed out (exit 124) → note "govulncheck skipped (timeout)" in evidence; **proceed to Method 3 immediately**
 - Save `/tmp/govulncheck-source.txt` as a workflow artifact
 
-**Decision Point — govulncheck is ONE signal, not the only one. Always proceed to Method 3 next.**
-- IF source scan reports vulnerable symbols called → Strong evidence for HIGH RISK; still continue to Method 3
-- IF source scan reports **no findings** → The CVE is likely not yet in the Go vuln database. This is conclusive for govulncheck. **Do NOT re-run in a different format or mode.** Proceed to Method 3.
-- IF source scan timed out or was skipped → Proceed to Method 3; note the gap in the report
+**Decision Point — govulncheck is ONE signal. Always continue to Method 3 next.**
+- IF scan reports vulnerable symbols called → Strong evidence for HIGH RISK; still continue to Method 3
+- IF scan reports **no findings** → CVE likely not yet in Go vuln database. This is the final govulncheck result. **Do NOT re-run.** Proceed to Method 3.
+- IF scan timed out or was skipped → Proceed to Method 3; note the gap in the report
 
 #### Method 3: Direct Dependency Check
 
