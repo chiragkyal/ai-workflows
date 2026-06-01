@@ -197,7 +197,12 @@ When the comment must be restricted to **Internal (Red Hat Employee Only)**, byp
 
 The `visibility` object uses `"type": "role"` and `"value": "Red Hat Employee"` for the Red Hat Jira instance:
 
+**Token detection:** Always attempt the REST API — don't bail out based on a pre-check. The Ambient Jira integration may expose the token under any of several env var names; let the HTTP response code determine success.
+
 ```bash
+# Try common token env var names in order
+JIRA_API_TOKEN="${JIRA_TOKEN:-${ATLASSIAN_TOKEN:-${ATLASSIAN_API_TOKEN:-}}}"
+
 # Write body to file first to avoid quoting issues
 cat > /tmp/comment-body.txt << 'EOF'
 Your comment text here (wiki markup supported).
@@ -207,7 +212,7 @@ COMMENT_BODY=$(cat /tmp/comment-body.txt)
 HTTP_STATUS=$(curl -s -o /tmp/jira-response.txt -w "%{http_code}" \
   -X POST \
   "https://redhat.atlassian.net/rest/api/2/issue/PROJ-123/comment" \
-  -H "Authorization: Bearer $JIRA_TOKEN" \
+  -H "Authorization: Bearer ${JIRA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   --data-binary @- << EOF
 {

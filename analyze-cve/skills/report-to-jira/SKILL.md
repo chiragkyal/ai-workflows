@@ -104,38 +104,32 @@ Jira comment bodies are capped at **32,767 characters**. Measure the full conver
 
 ## Step 3: Post the Comment
 
-> **Credential rule:** Never print, echo, or log any token, key, or password value. Pass credentials only via environment variable references (e.g. `$JIRA_TOKEN`). If `jira-cli` or `curl` requires authentication, confirm the call succeeded by checking the exit code — never by echoing the token value.
+> **Credential rule:** Never print, echo, or log any token, key, or password value. Pass credentials only via environment variable references. Never interpolate a credential value into a logged string.
 
 Post to `SOURCE_TICKET` — the ticket the CVE details were read from.
 
 **All comments MUST be posted with Internal (Red Hat Employee Only) visibility.** CVE analysis reports contain security-sensitive findings and must never be publicly visible.
 
-The Jira comment visibility is set via the `visibility` field:
-```json
-{
-  "type": "role",
-  "value": "Red Hat Employee"
-}
-```
-
 ---
 
-**Primary — Jira REST API** (required because the MCP tool does not expose a `visibility` parameter):
+### Step 3a: REST API with Internal visibility (always attempt first)
 
-Write the comment body to `/tmp/cve-report-comment.txt` first, then post:
+Always try the REST API first — don't pre-check for token env vars. The Ambient Jira integration may expose the token under any of several env var names, and the only reliable way to know if it's available is to let `curl` try and check the HTTP response.
 
 ```bash
-# Write body to file (avoids shell quoting issues with large payloads)
+# Try common token env var names — use whichever is set
+JIRA_API_TOKEN="${JIRA_TOKEN:-${ATLASSIAN_TOKEN:-${ATLASSIAN_API_TOKEN:-${JIRA_API_TOKEN:-}}}}"
+JIRA_BASE_URL="${JIRA_URL:-https://redhat.atlassian.net}"
+
 cat > /tmp/cve-report-comment.txt << 'COMMENT_EOF'
 <constructed comment from Step 2>
 COMMENT_EOF
 
-# Post with Internal visibility — never print JIRA_TOKEN value
 COMMENT_BODY=$(cat /tmp/cve-report-comment.txt)
 HTTP_STATUS=$(curl -s -o /tmp/jira-post-response.txt -w "%{http_code}" \
   -X POST \
-  "https://redhat.atlassian.net/rest/api/2/issue/${SOURCE_TICKET}/comment" \
-  -H "Authorization: Bearer $JIRA_TOKEN" \
+  "${JIRA_BASE_URL}/rest/api/2/issue/${SOURCE_TICKET}/comment" \
+  -H "Authorization: Bearer ${JIRA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   --data-binary @- << EOF
 {
@@ -152,35 +146,49 @@ echo "Jira API HTTP status: ${HTTP_STATUS}"
 if [ "${HTTP_STATUS}" = "201" ]; then
   echo "✓ Comment posted with Internal visibility"
 else
-  echo "✗ Failed (HTTP ${HTTP_STATUS})"
+  echo "✗ REST API failed (HTTP ${HTTP_STATUS}) — will fall back to MCP tool"
   cat /tmp/jira-post-response.txt
 fi
 ```
 
-**Fallback — MCP tool** (if REST API is unavailable):
+- IF HTTP 201 → done. Skip Step 3b.
+- IF HTTP 401/403 → token not available or insufficient permissions; continue to Step 3b.
+- IF any other failure → continue to Step 3b.
 
-> ⚠️ The MCP tool does not support comment visibility. The comment will be **publicly visible** to all Jira users, not restricted to Red Hat employees.
+---
 
-Before using this fallback, **pause and ask the user**:
+### Step 3b: MCP tool (fallback when REST API fails)
+
+The Ambient Jira integration handles authentication transparently through the MCP server. Use when Step 3a fails.
+
+> ⚠️ The MCP tool does not support the `visibility` field — the comment will be visible to all Jira users, not restricted to Red Hat employees.
+
+Before posting via MCP, **ask the user**:
 
 ```
 ⚠️ REST API unavailable. Fallback (MCP tool) cannot set Internal visibility — comment will be public. Proceed?
 ```
 
-- IF user says **yes** → proceed with MCP tool:
+- IF user says **yes** → post:
   ```python
   mcp__atlassian__jira_add_issue_comment(
       issue_key=SOURCE_TICKET,
       comment_body="<constructed comment from Step 2>"
   )
   ```
-- IF user says **no** → display the full comment body in the session for manual posting.
+- IF user says **no** → display the full comment body in the session for manual posting with Internal visibility.
 
-**Fallback — jira-cli** (if both REST API and MCP are unavailable):
+**Fallback — jira-cli** (if MCP is also unavailable):
 
-> ⚠️ `jira-cli` does not support comment visibility. The comment will be publicly visible.
+Ask the same one-line question. Only proceed if the user confirms:
 
-Before using this fallback, ask the same one-line question as the MCP fallback above. Only proceed if the user confirms; otherwise display the comment body for manual posting.
+```bash
+jira issue comment add "${SOURCE_TICKET}" \
+  --body "$(cat /tmp/cve-report-comment.txt)" \
+  --no-input
+```
+
+If the user declines, display the comment body for manual posting.
 
 ```bash
 jira issue comment add "${SOURCE_TICKET}" \
