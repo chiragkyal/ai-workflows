@@ -8,6 +8,7 @@ Exactly one of the following input modes is required:
 
 - **CVE-ID** — Direct CVE identifier (format: `CVE-YYYY-NNNNN`, case-insensitive). Use when you already know the CVE.
 - **--jira=PROJ-NNN** — Red Hat Jira ticket key (e.g. `--jira=OCPBUGS-12345`). The workflow fetches the ticket and extracts the CVE ID from it. Use when you are starting from a Jira issue.
+- **--jql="..."** — JQL query (e.g. `--jql="project = OCPBUGS AND labels = needs-cve-analysis"`). The workflow fetches matching issues, processes **only the first result**, and logs the rest as skipped. Use when you want to pick a ticket automatically from a queue.
 
 Optional flags:
 
@@ -62,9 +63,10 @@ go install golang.org/x/tools/cmd/digraph@latest
 
 1. **Parse Arguments**
    - Determine input mode:
-     - IF `--jira=PROJ-NNN` provided → set `JIRA_TICKET=PROJ-NNN`, CVE-ID to be resolved in Phase 0.5
+     - IF `--jql="..."` provided → set `JQL_QUERY`, resolve to a single ticket in Phase 0.3
+     - ELSE IF `--jira=PROJ-NNN` provided → set `JIRA_TICKET=PROJ-NNN`, CVE-ID to be resolved in Phase 0.5
      - ELSE IF a bare `CVE-YYYY-NNNNN` token is present → set `CVE_ID` directly
-     - ELSE → exit with error: "Provide either a CVE ID (e.g. CVE-2024-45338) or a Jira ticket (e.g. --jira=OCPBUGS-12345)"
+     - ELSE → exit with error: "Provide a CVE ID, a Jira ticket (--jira=), or a JQL query (--jql=)"
    - Extract `--repo` value if provided (optional); store as `REPO_INPUT`.
    - Extract `--algo` value if provided (optional, default: `vta`).
    - Valid `--algo` values: `vta`, `rta`, `cha`, `static`.
@@ -80,11 +82,42 @@ go install golang.org/x/tools/cmd/digraph@latest
    ```
 
 3. **If ANY tool is missing** → Display installation instructions and **exit with error**.
-4. **If all tools present** → Continue to Phase 0.5 (if Jira mode) or Phase 0.7 (if direct CVE mode).
+4. **If all tools present** → Continue to Phase 0.3 (if JQL mode), Phase 0.5 (if Jira mode), or Phase 0.7 (if direct CVE mode).
 
 ---
 
-## Phase 0.5: Jira CVE Extraction _(only when `--jira` is provided)_
+## Phase 0.3: JQL Resolution _(only when `--jql` is provided)_
+
+Run the JQL query, take the **first result only**, and continue as if `--jira=<first-ticket>` was provided.
+
+```python
+results = mcp__atlassian__jira_search_issues(
+    jql=JQL_QUERY,
+    start_at=0,
+    max_results=10   # fetch a few to log the skipped ones
+)
+```
+
+**Decision Point:**
+- IF query returns 0 results → exit with: `No Jira issues matched the JQL query: <JQL_QUERY>`
+- IF query returns 1 or more results:
+  - Set `JIRA_TICKET = results[0].key`
+  - Print a summary table of all returned issues, clearly marking which is being processed:
+
+  ```
+  JQL matched <N> issue(s). Processing the first; the rest are skipped this run.
+
+  ✅  <PROJ-NNN>  <summary>          ← processing now
+  ⏭   <PROJ-NNN>  <summary>          ← skipped
+  ⏭   <PROJ-NNN>  <summary>          ← skipped
+  ...
+  ```
+
+- Continue to Phase 0.5 with `JIRA_TICKET` set.
+
+---
+
+## Phase 0.5: Jira CVE Extraction _(only when `--jira` or `--jql` is provided)_
 
 - **Skill**: [jira-cve-extraction](skills/jira-cve-extraction/SKILL.md)
 - **References**: [`reference/jira-mcp-tools.md`](reference/jira-mcp-tools.md), [`reference/jira-cli-fallback.md`](reference/jira-cli-fallback.md)
