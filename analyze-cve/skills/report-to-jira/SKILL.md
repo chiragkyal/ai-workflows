@@ -108,24 +108,85 @@ Jira comment bodies are capped at **32,767 characters**. Measure the full conver
 
 Post to `SOURCE_TICKET` — the ticket the CVE details were read from.
 
-**Primary — MCP tool:**
+**All comments MUST be posted with Internal (Red Hat Employee Only) visibility.** CVE analysis reports contain security-sensitive findings and must never be publicly visible.
 
-```python
-mcp__atlassian__jira_add_issue_comment(
-    issue_key=SOURCE_TICKET,       # e.g. "OCPBUGS-12345"
-    comment_body="<constructed comment from Step 2>"
-)
+The Jira comment visibility is set via the `visibility` field:
+```json
+{
+  "type": "role",
+  "value": "Red Hat Employee"
+}
 ```
 
-**Fallback — jira-cli** (if MCP tool is unavailable):
+---
+
+**Primary — Jira REST API** (required because the MCP tool does not expose a `visibility` parameter):
+
+Write the comment body to `/tmp/cve-report-comment.txt` first, then post:
+
+```bash
+# Write body to file (avoids shell quoting issues with large payloads)
+cat > /tmp/cve-report-comment.txt << 'COMMENT_EOF'
+<constructed comment from Step 2>
+COMMENT_EOF
+
+# Post with Internal visibility — never print JIRA_TOKEN value
+COMMENT_BODY=$(cat /tmp/cve-report-comment.txt)
+HTTP_STATUS=$(curl -s -o /tmp/jira-post-response.txt -w "%{http_code}" \
+  -X POST \
+  "https://redhat.atlassian.net/rest/api/2/issue/${SOURCE_TICKET}/comment" \
+  -H "Authorization: Bearer $JIRA_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @- << EOF
+{
+  "body": $(echo "${COMMENT_BODY}" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))"),
+  "visibility": {
+    "type": "group",
+    "value": "Red Hat Employee"
+  }
+}
+EOF
+)
+
+echo "Jira API HTTP status: ${HTTP_STATUS}"
+if [ "${HTTP_STATUS}" = "201" ]; then
+  echo "✓ Comment posted with Internal visibility"
+else
+  echo "✗ Failed (HTTP ${HTTP_STATUS})"
+  cat /tmp/jira-post-response.txt
+fi
+```
+
+**Fallback — MCP tool** (if REST API is unavailable):
+
+> ⚠️ The MCP tool does not support comment visibility. The comment will be **publicly visible** to all Jira users, not restricted to Red Hat employees.
+
+Before using this fallback, **pause and ask the user**:
+
+```
+⚠️ REST API unavailable. Fallback (MCP tool) cannot set Internal visibility — comment will be public. Proceed?
+```
+
+- IF user says **yes** → proceed with MCP tool:
+  ```python
+  mcp__atlassian__jira_add_issue_comment(
+      issue_key=SOURCE_TICKET,
+      comment_body="<constructed comment from Step 2>"
+  )
+  ```
+- IF user says **no** → display the full comment body in the session for manual posting.
+
+**Fallback — jira-cli** (if both REST API and MCP are unavailable):
+
+> ⚠️ `jira-cli` does not support comment visibility. The comment will be publicly visible.
+
+Before using this fallback, ask the same one-line question as the MCP fallback above. Only proceed if the user confirms; otherwise display the comment body for manual posting.
 
 ```bash
 jira issue comment add "${SOURCE_TICKET}" \
   --body "$(cat /tmp/cve-report-comment.txt)" \
   --no-input
 ```
-
-Write the comment body to `/tmp/cve-report-comment.txt` before running the fallback.
 
 ---
 

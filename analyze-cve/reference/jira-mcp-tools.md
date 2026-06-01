@@ -180,6 +180,8 @@ mcp__atlassian__jira_add_issue_comment(
 )
 ```
 
+> **Limitation:** The MCP tool does not expose a `visibility` parameter. Comments posted via this tool will be **publicly visible**. For security-sensitive comments (e.g. CVE analysis reports), use the REST API directly (see below).
+
 **Example:**
 
 ```python
@@ -188,6 +190,47 @@ mcp__atlassian__jira_add_issue_comment(
     comment_body="Implementation complete. Ready for testing.\n\nSee linked PR for code changes."
 )
 ```
+
+### Add Comment with Visibility (REST API)
+
+When the comment must be restricted to **Internal (Red Hat Employee Only)**, bypass the MCP tool and call the Jira REST API directly.
+
+The `visibility` object uses `"type": "role"` and `"value": "Red Hat Employee"` for the Red Hat Jira instance:
+
+```bash
+# Write body to file first to avoid quoting issues
+cat > /tmp/comment-body.txt << 'EOF'
+Your comment text here (wiki markup supported).
+EOF
+
+COMMENT_BODY=$(cat /tmp/comment-body.txt)
+HTTP_STATUS=$(curl -s -o /tmp/jira-response.txt -w "%{http_code}" \
+  -X POST \
+  "https://redhat.atlassian.net/rest/api/2/issue/PROJ-123/comment" \
+  -H "Authorization: Bearer $JIRA_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @- << EOF
+{
+  "body": $(echo "${COMMENT_BODY}" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))"),
+  "visibility": {
+    "type": "group",
+    "value": "Red Hat Employee"
+  }
+}
+EOF
+)
+
+echo "HTTP status: ${HTTP_STATUS}"   # 201 = success
+```
+
+**Visibility options for redhat.atlassian.net:**
+
+| Visibility label in UI | `type` | `value` |
+|---|---|---|
+| Internal (Red Hat Employee Only) | `group` | `Red Hat Employee` |
+| All users (public) | _(omit the `visibility` field entirely)_ | — |
+
+> **Credential rule:** Never print, echo, or log the value of `$JIRA_TOKEN`. Reference it only by name. Confirm success by checking the HTTP status code, not by echoing the token.
 
 ## Linking Operations
 
