@@ -104,6 +104,8 @@ Jira comment bodies are capped at **32,767 characters**. Measure the full conver
 
 ## Step 3: Post the Comment
 
+> **Credential rule:** Never print, echo, or log any token, key, or password value. Pass credentials only via environment variable references (e.g. `$JIRA_TOKEN`). If `jira-cli` or `curl` requires authentication, confirm the call succeeded by checking the exit code — never by echoing the token value.
+
 Post to `SOURCE_TICKET` — the ticket the CVE details were read from.
 
 **Primary — MCP tool:**

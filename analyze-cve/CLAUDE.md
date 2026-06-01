@@ -21,6 +21,27 @@ Optional flags:
   - `cha` — Fast, less precise
   - `static` — Fastest, least precise
 
+## Security — Credential Handling
+
+> **This rule applies to every shell command, log line, and model response in this workflow, without exception.**
+
+- **Never print, echo, log, or display credentials in any form.** This includes API tokens, passwords, PATs, service-account keys, and any environment variable whose name contains `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `PAT`, `CREDENTIAL`, or `AUTH`.
+- If a command requires a credential, pass it directly via the environment variable reference (e.g. `$JIRA_TOKEN`). Never interpolate the value into a string that will be printed or logged.
+- If a credential accidentally appears in command output, **do not repeat or quote it** in any subsequent message or log.
+- When logging command invocations for debugging, **mask** credential arguments:
+  ```bash
+  # Good — value never appears in output
+  curl -H "Authorization: Bearer $JIRA_TOKEN" ...
+  echo "Calling Jira API with Bearer token (masked)"
+
+  # Bad — token value exposed in log
+  echo "Token is: $JIRA_TOKEN"
+  curl -v -H "Authorization: Bearer eyJhb..."
+  ```
+- The same rule applies to SSH keys, `~/.netrc` contents, Git credential helpers, and any secrets mounted as files.
+
+---
+
 ## Prerequisites
 
 All tools below are **required**. Exit with an error if any are missing.
