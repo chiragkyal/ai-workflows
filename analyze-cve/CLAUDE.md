@@ -278,6 +278,31 @@ echo "  go.mod : $([ -f "${REPO_DIR}/go.mod" ] && echo 'present' || echo 'MISSIN
 - IF `go.mod` missing → warn user; call graph and govulncheck steps will be skipped, dependency-based methods only.
 - IF `go.mod` present → Continue to Phase 1.
 
+### Repo Guard — Re-clone on Ephemeral Storage Loss
+
+`/workspace/repos/` is **ephemeral scratch storage** in Ambient. If a long-running command (e.g. govulncheck) causes resource pressure or a container shell reset, ephermal storage is wiped — the cloned repo disappears while `/workspace/workflows/` (the mounted git repo) survives. The session log will show `Shell cwd was reset to /workspace/workflows/...` when this happens.
+
+To handle this, **every phase that needs `REPO_DIR` must run this guard first**:
+
+```bash
+if [ ! -f "${REPO_DIR}/go.mod" ]; then
+  echo "⚠ Repo missing at ${REPO_DIR} (ephemeral storage cleared) — re-cloning..."
+  mkdir -p /workspace/repos
+  if [ -n "${GIT_BRANCH}" ]; then
+    timeout -k 10 300 git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+  else
+    timeout -k 10 300 git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+  fi
+  if [ $? -ne 0 ]; then
+    echo "✗ Re-clone failed. Cannot continue without the repository."
+    exit 1
+  fi
+  echo "✓ Re-cloned: ${REPO_DIR} @ $(git -C "${REPO_DIR}" rev-parse --abbrev-ref HEAD)"
+fi
+```
+
+Run this guard at the start of **Phase 2, Phase 4, and Phase 5**.
+
 ---
 
 ## Phase 1: CVE Intelligence Gathering
@@ -297,6 +322,8 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 ---
 
 ## Phase 2: Codebase Impact Analysis
+
+**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-on-ephemeral-storage-loss) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 - **Skill**: [codebase-impact-analysis](skills/codebase-impact-analysis/SKILL.md)
   - Sub-skill: [call-graph-analysis](skills/call-graph-analysis/SKILL.md)
@@ -355,6 +382,8 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 ---
 
 ## Phase 5: Interactive Fix Application
+
+**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-on-ephemeral-storage-loss) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 Requires **explicit user approval** before proceeding.
 
