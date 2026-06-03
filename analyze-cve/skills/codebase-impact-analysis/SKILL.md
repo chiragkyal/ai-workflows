@@ -92,12 +92,14 @@ grep "${VULN_PKG}" "${REPO_DIR}/go.mod" && echo "FOUND in go.mod" || echo "NOT F
 
 **Step 2b — Full source scan (only if Step 2a confirms package present)**
 
+Always set `CGO_ENABLED=0` — some repos (e.g. spiffe-spire) have CGO dependencies like `go-sqlite3` that require a C compiler and system dev libraries (`build-base`, `musl-dev`). These are typically absent in the Ambient container, causing govulncheck to hang indefinitely during compilation. Disabling CGO skips C compilation; Go-only symbol analysis still works for vulnerability detection.
+
 ```bash
 cd "${REPO_DIR}"
 
 if [ ! -s /tmp/govulncheck-source.txt ]; then
-  echo "=== govulncheck source scan ==="
-  timeout 300 govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
+  echo "=== govulncheck source scan (CGO_ENABLED=0) ==="
+  timeout 300 env CGO_ENABLED=0 govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
   SOURCE_EXIT=$?
   if [ $SOURCE_EXIT -eq 124 ]; then
     echo "govulncheck timed out after 300s — relying on manual methods"
