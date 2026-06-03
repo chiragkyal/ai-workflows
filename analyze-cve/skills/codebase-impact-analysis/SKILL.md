@@ -72,76 +72,130 @@ go list -m <vulnerable-package>
 #### Method 2: Go Vulnerability Scanner
 
 > **CRITICAL RULES — read before running anything:**
-> 1. **Run govulncheck AT MOST ONCE.** If `/tmp/govulncheck-source.txt` already exists and is non-empty, use that file directly. Do NOT re-run govulncheck.
-> 2. **Never pipe govulncheck to `head`, `tail`, or any other command.** Always redirect to a file. Piping causes govulncheck to hang (SIGPIPE) when the reader closes.
-> 3. **"No findings" is a valid and final result** — it means the CVE is not yet in the Go vuln database. Immediately proceed to Method 3. Do NOT re-run in a different mode or format to double-check.
-> 4. **Do NOT use `-scan=module`** — this flag does not accept file patterns and its error messages will cause unnecessary retries. Use the go.mod grep check in Step 2a instead.
+> 1. **Run govulncheck AT MOST ONCE.** If `/tmp/govulncheck-source.txt` already exists and is non-empty, read that file. Do NOT re-run.
+> 2. **Never pipe govulncheck to `head`, `tail`, `grep`, or any other command.** Always redirect to a file (`> file 2>&1`). Piping causes govulncheck to hang (SIGPIPE) when the reader closes.
+> 3. **"No findings" is a valid and final result** — it means the CVE is not yet in the Go vuln database. Proceed to Method 3 immediately. Do NOT re-run in a different mode or format.
+> 4. **Always use `timeout -k 10`** to force-kill if SIGTERM is ignored. Plain `timeout` sends SIGTERM but govulncheck can ignore it when stuck in package loading.
 
-**Step 2a — Quick go.mod check (replaces module scan, instant)**
+This method has 4 sequential steps. If any step fails or times out, skip the remaining steps and proceed to Method 3 — govulncheck is one signal, not the only one.
 
-Before running the full scan, grep go.mod for the vulnerable package. This avoids a 300s timeout on repos that don't even use the package.
+---
+
+**Step 2a — go.mod check (instant)**
 
 ```bash
 VULN_PKG="google.golang.org/grpc"   # replace with actual vulnerable package
-echo "=== go.mod check for ${VULN_PKG} ==="
+echo "=== Step 2a: go.mod check for ${VULN_PKG} ==="
 grep "${VULN_PKG}" "${REPO_DIR}/go.mod" && echo "FOUND in go.mod" || echo "NOT FOUND in go.mod"
 ```
 
-- IF **NOT FOUND** in go.mod → record "package not in module graph" as LOW signal; **skip Step 2b**; proceed to Method 3
-- IF **FOUND** → note the version; proceed to Step 2b
+- IF **NOT FOUND** → record "package not in module graph" as LOW signal; **skip Steps 2b–2d entirely**; proceed to Method 3
+- IF **FOUND** → note the version; continue
 
-**Step 2b — Full source scan (only if Step 2a confirms package present)**
+---
 
-Dynamically decide whether CGO can be enabled. Some repos (e.g. spiffe-spire with `go-sqlite3`) require a C compiler and system dev libraries for CGO. If those are missing, govulncheck hangs during compilation. If CGO works, use it — it gives the most complete analysis by including `//go:build cgo` code paths.
+**Step 2b — Pre-flight: download modules and verify toolchain (max 2 min)**
+
+Large repos (300+ deps like spiffe-spire) need all modules cached before govulncheck can load them. Separate this from the scan to isolate network issues from analysis hangs.
 
 ```bash
 cd "${REPO_DIR}"
+echo "=== Step 2b: Pre-flight ==="
 
+# Download all modules (network-bound, do first)
+echo "Downloading modules..."
+timeout -k 10 120 env CGO_ENABLED=0 go mod download > /tmp/go-mod-download.txt 2>&1
+if [ $? -ne 0 ]; then
+  echo "⚠ go mod download failed or timed out — govulncheck may fail"
+  cat /tmp/go-mod-download.txt
+fi
+
+# Verify the Go toolchain can load the package graph
+echo "Loading package list..."
+timeout -k 10 60 env CGO_ENABLED=0 go list ./... > /tmp/go-list-packages.txt 2>&1
+LIST_EXIT=$?
+PKG_COUNT=$(wc -l < /tmp/go-list-packages.txt 2>/dev/null || echo 0)
+echo "Package count: ${PKG_COUNT}, exit code: ${LIST_EXIT}"
+
+if [ $LIST_EXIT -ne 0 ]; then
+  echo "✗ go list failed — skipping govulncheck entirely"
+  echo "go list failed (exit ${LIST_EXIT})" > /tmp/govulncheck-source.txt
+  cat /tmp/go-list-packages.txt >> /tmp/govulncheck-source.txt
+  # Skip to Method 3 — if go list can't work, govulncheck won't either
+fi
+```
+
+- IF `go list` fails or times out → write the error to `/tmp/govulncheck-source.txt`, **skip Steps 2c–2d**, proceed to Method 3
+- IF `go list` succeeds → continue. The package count helps estimate scan time.
+
+---
+
+**Step 2c — CGO probe (max 60s, skip if compiler absent)**
+
+```bash
+echo "=== Step 2c: CGO probe ==="
+CGO_SETTING=0
+if command -v gcc >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; then
+  timeout -k 10 60 env CGO_ENABLED=1 go build ./... > /tmp/cgo-probe.txt 2>&1
+  if [ $? -eq 0 ]; then
+    CGO_SETTING=1
+    echo "✓ CGO works — using CGO_ENABLED=1"
+  else
+    echo "✗ CGO build failed — using CGO_ENABLED=0"
+  fi
+else
+  echo "✗ No C compiler — using CGO_ENABLED=0"
+fi
+echo "CGO_ENABLED=${CGO_SETTING}"
+```
+
+---
+
+**Step 2d — govulncheck scan (max 5 min)**
+
+Use `-scan=package` first (fast, checks if CVE is in vuln DB and package imported). Only escalate to symbol-level if package-level finds something.
+
+```bash
 if [ ! -s /tmp/govulncheck-source.txt ]; then
-  # Step 2b.1: Probe whether CGO compilation is possible
-  echo "=== Checking CGO support ==="
-  CGO_OK=false
-  if command -v gcc >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; then
-    # Compiler exists — try a quick build to verify headers are available
-    timeout 60 env CGO_ENABLED=1 go build ./... > /tmp/cgo-probe.txt 2>&1
-    if [ $? -eq 0 ]; then
-      CGO_OK=true
-      echo "✓ CGO compilation works — using CGO_ENABLED=1 for full coverage"
-    else
-      echo "✗ CGO compilation failed (missing dev libraries?) — falling back to CGO_ENABLED=0"
-      echo "  Probe output: $(head -5 /tmp/cgo-probe.txt)"
+  # Package-level scan first (fast — no symbol resolution)
+  echo "=== Step 2d: govulncheck package scan ==="
+  timeout -k 10 120 env CGO_ENABLED=${CGO_SETTING} govulncheck -scan=package ./... > /tmp/govulncheck-package.txt 2>&1
+  PKG_EXIT=$?
+  echo "govulncheck -scan=package exit: ${PKG_EXIT}"
+  cat /tmp/govulncheck-package.txt
+
+  # Check if the package scan found anything worth escalating to symbol level
+  if grep -qi "Vulnerability\|finding\|${VULN_PKG}" /tmp/govulncheck-package.txt 2>/dev/null; then
+    echo "=== Step 2d: govulncheck symbol scan (escalating — CVE found at package level) ==="
+    timeout -k 10 300 env CGO_ENABLED=${CGO_SETTING} govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
+    SOURCE_EXIT=$?
+    if [ $SOURCE_EXIT -eq 124 ] || [ $SOURCE_EXIT -eq 137 ]; then
+      echo "govulncheck symbol scan timed out or was killed — using package-level results"
+      cp /tmp/govulncheck-package.txt /tmp/govulncheck-source.txt
     fi
   else
-    echo "✗ No C compiler found — using CGO_ENABLED=0"
+    echo "Package scan found no findings — CVE likely not in Go vuln DB yet"
+    cp /tmp/govulncheck-package.txt /tmp/govulncheck-source.txt
   fi
-
-  # Step 2b.2: Run govulncheck with the determined CGO setting
-  if [ "$CGO_OK" = true ]; then
-    echo "=== govulncheck source scan (CGO_ENABLED=1) ==="
-    timeout 300 env CGO_ENABLED=1 govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
-  else
-    echo "=== govulncheck source scan (CGO_ENABLED=0) ==="
-    echo "NOTE: Files behind //go:build cgo tags are excluded from this scan." >> /tmp/govulncheck-source.txt
-    timeout 300 env CGO_ENABLED=0 govulncheck ./... >> /tmp/govulncheck-source.txt 2>&1
-  fi
-  SOURCE_EXIT=$?
-  if [ $SOURCE_EXIT -eq 124 ]; then
-    echo "govulncheck timed out after 300s — relying on manual methods"
-  fi
-  echo "govulncheck exit code: ${SOURCE_EXIT}"
+  echo "govulncheck complete"
 else
   echo "=== govulncheck (using cached result) ==="
 fi
 cat /tmp/govulncheck-source.txt
+
+# Verify repo is still accessible after govulncheck
+echo "=== Post-govulncheck repo check ==="
+ls "${REPO_DIR}/go.mod" > /dev/null 2>&1 && echo "✓ Repo intact at ${REPO_DIR}" || echo "✗ WARNING: Repo missing at ${REPO_DIR}"
 ```
 
-- IF timed out (exit 124) → note "govulncheck skipped (timeout)" in evidence; **proceed to Method 3 immediately**
-- IF CGO was disabled → note in the report: "CGO-gated code paths were excluded from govulncheck analysis (no C compiler or missing dev libraries)"
+- IF CGO was disabled → note in report: "CGO-gated code paths excluded from analysis"
+- IF package scan found no findings → CVE is not in Go vuln DB; do NOT escalate to symbol scan; proceed to Method 3
+- IF symbol scan timed out → use package-level results instead; proceed to Method 3
 - Save `/tmp/govulncheck-source.txt` as a workflow artifact
 
 **Decision Point — govulncheck is ONE signal. Always continue to Method 3 next.**
 - IF scan reports vulnerable symbols called → Strong evidence for HIGH RISK; still continue to Method 3
-- IF scan reports **no findings** → CVE likely not yet in Go vuln database. This is the final govulncheck result. **Do NOT re-run.** Proceed to Method 3.
+- IF scan reports **no findings** → CVE likely not yet in Go vuln database. **Do NOT re-run.** Proceed to Method 3.
 - IF scan timed out or was skipped → Proceed to Method 3; note the gap in the report
 
 #### Method 3: Direct Dependency Check
