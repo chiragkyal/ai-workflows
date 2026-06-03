@@ -307,7 +307,7 @@ The namespace spans **two** repositories. The mustgather image is built from the
     {
       "image_name": "openshift4/ose-ansible-rhel9-operator",
       "repo_url": "https://github.com/openshift/ansible-operator-plugins",
-      "clone_path": "/workspace/repos/ansible-operator-plugins",
+      "clone_path": ".work/repos/ansible-operator-plugins",
       "confidence": "exact_match",
       "match_method": "exact"
     }

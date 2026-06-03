@@ -15,7 +15,7 @@ Optional flags:
 - **--repo=\<url-or-component\>** — Repository to analyze. Accepts:
   - A full GitHub URL: `--repo=https://github.com/openshift/hypershift`
   - A short component name: `--repo=hypershift` (resolved via `component-repo-mapping` skill)
-  - If omitted, the workflow checks `/workspace/repos/` first, then resolves from the Jira ticket's components (if `--jira` was used), then prompts the user.
+  - If omitted, the workflow checks for pre-cloned repos first, then resolves from the Jira ticket's components (if `--jira` was used), then prompts the user.
 - **--algo** (default: `vta`): Call graph construction algorithm.
   - `vta` — Most precise, fewest false positives (recommended)
   - `rta` — Good balance of precision and speed
@@ -142,17 +142,32 @@ results = mcp__atlassian__jira_search_issues(
 ## Phase 0.7: Repository Resolution and Cloning
 
 - **Skill**: [image-repo-mapping](skills/image-repo-mapping/SKILL.md)
-- **Working directory for all subsequent phases**: `/workspace/repos/<repo-name>`
+
+### Storage path
+
+Cloned repos are stored under the **persistent workflow mount** so they survive Ambient shell resets:
+
+```bash
+REPOS_BASE="/workspace/workflows/ai-workflows/.work/repos"
+mkdir -p "${REPOS_BASE}"
+```
+
+`/workspace/workflows/` is the persistent git mount. `.work/` is gitignored. Repos cloned here are **not** wiped when the container shell recycles (unlike `/workspace/repos/` which is ephemeral scratch).
 
 ### Step 1: Check for Pre-Cloned Repository
 
+Check both the persistent path and the ephemeral path (Ambient pre-clones via the session `repos` field into `/workspace/repos/`):
+
 ```bash
-ls /workspace/repos/ 2>/dev/null
+# Check persistent path first, then ephemeral
+for CHECK_DIR in "${REPOS_BASE}" /workspace/repos; do
+  ls "${CHECK_DIR}/" 2>/dev/null
+done
 ```
 
-- IF `/workspace/repos/` contains exactly one directory → use it as `REPO_DIR`, skip to Step 3.
-- IF `/workspace/repos/` contains multiple directories → list them, ask user which to analyse.
-- IF `/workspace/repos/` is empty → continue to Step 2.
+- IF either path contains exactly one directory → use it as `REPO_DIR`, skip to Step 3.
+- IF either path contains multiple directories → list them, ask user which to analyse.
+- IF both are empty → continue to Step 2.
 
 ### Step 2: Resolve Repository URL
 
@@ -228,20 +243,20 @@ Set `REPO_URL = COMPONENT_URL` and `GIT_BRANCH = COMPONENT_BRANCH` (or `COMPONEN
 
 ```bash
 REPO_NAME=$(basename "${REPO_URL}" .git)
-REPO_DIR="/workspace/repos/${REPO_NAME}"
+REPO_DIR="${REPOS_BASE}/${REPO_NAME}"
 
 if [ ! -d "${REPO_DIR}/.git" ]; then
   echo "Cloning ${REPO_URL} (branch: ${GIT_BRANCH:-default}) into ${REPO_DIR} ..."
+  mkdir -p "${REPOS_BASE}"
   if [ -n "${GIT_BRANCH}" ]; then
-    timeout 300 git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+    timeout -k 10 300 git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
   else
-    timeout 300 git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
+    timeout -k 10 300 git clone --depth=50 "${REPO_URL}" "${REPO_DIR}"
   fi
   CLONE_EXIT=$?
-  if [ $CLONE_EXIT -eq 124 ]; then
+  if [ $CLONE_EXIT -eq 124 ] || [ $CLONE_EXIT -eq 137 ]; then
     echo "ERROR: git clone timed out after 300s for ${REPO_URL}"
     echo "The repository may be too large or the network too slow."
-    echo "Try again or provide a pre-cloned repo in /workspace/repos/"
     exit 1
   elif [ $CLONE_EXIT -ne 0 ]; then
     echo "ERROR: git clone failed (exit ${CLONE_EXIT}) for ${REPO_URL}"
@@ -251,10 +266,10 @@ else
   CURRENT_BRANCH=$(git -C "${REPO_DIR}" rev-parse --abbrev-ref HEAD)
   if [ -n "${GIT_BRANCH}" ] && [ "${CURRENT_BRANCH}" != "${GIT_BRANCH}" ]; then
     echo "Switching from ${CURRENT_BRANCH} to ${GIT_BRANCH} ..."
-    timeout 120 git -C "${REPO_DIR}" fetch origin "${GIT_BRANCH}"
+    timeout -k 10 120 git -C "${REPO_DIR}" fetch origin "${GIT_BRANCH}"
     git -C "${REPO_DIR}" checkout "${GIT_BRANCH}"
   fi
-  timeout 120 git -C "${REPO_DIR}" pull --ff-only
+  timeout -k 10 120 git -C "${REPO_DIR}" pull --ff-only
 fi
 
 # Explicit verification — always print this so it's visible in the session
@@ -278,16 +293,14 @@ echo "  go.mod : $([ -f "${REPO_DIR}/go.mod" ] && echo 'present' || echo 'MISSIN
 - IF `go.mod` missing → warn user; call graph and govulncheck steps will be skipped, dependency-based methods only.
 - IF `go.mod` present → Continue to Phase 1.
 
-### Repo Guard — Re-clone on Ephemeral Storage Loss
+### Repo Guard — Re-clone if Missing
 
-`/workspace/repos/` is **ephemeral scratch storage** in Ambient. If a long-running command (e.g. govulncheck) causes resource pressure or a container shell reset, ephermal storage is wiped — the cloned repo disappears while `/workspace/workflows/` (the mounted git repo) survives. The session log will show `Shell cwd was reset to /workspace/workflows/...` when this happens.
-
-To handle this, **every phase that needs `REPO_DIR` must run this guard first**:
+Although repos are now cloned to the persistent workflow mount (`.work/repos/`), edge cases like disk pressure or manual cleanup can still cause loss. Every phase that needs `REPO_DIR` must run this guard first:
 
 ```bash
 if [ ! -f "${REPO_DIR}/go.mod" ]; then
-  echo "⚠ Repo missing at ${REPO_DIR} (ephemeral storage cleared) — re-cloning..."
-  mkdir -p /workspace/repos
+  echo "⚠ Repo missing at ${REPO_DIR} — re-cloning..."
+  mkdir -p "${REPOS_BASE}"
   if [ -n "${GIT_BRANCH}" ]; then
     timeout -k 10 300 git clone --depth=50 -b "${GIT_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
   else
@@ -327,7 +340,7 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 
 - **Skill**: [codebase-impact-analysis](skills/codebase-impact-analysis/SKILL.md)
   - Sub-skill: [call-graph-analysis](skills/call-graph-analysis/SKILL.md)
-- **Working directory**: `REPO_DIR` set in Phase 0.7 (e.g. `/workspace/repos/hypershift`)
+- **Working directory**: `REPO_DIR` set in Phase 0.7 (e.g. `.work/repos/hypershift`)
 - **Input**: CVE profile from Phase 1, `--algo` preference
 - **Output**: Risk level (HIGH/MEDIUM/LOW/NEEDS_REVIEW), evidence package, confidence assessment
 
