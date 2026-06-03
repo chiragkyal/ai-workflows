@@ -92,14 +92,38 @@ grep "${VULN_PKG}" "${REPO_DIR}/go.mod" && echo "FOUND in go.mod" || echo "NOT F
 
 **Step 2b — Full source scan (only if Step 2a confirms package present)**
 
-Always set `CGO_ENABLED=0` — some repos (e.g. spiffe-spire) have CGO dependencies like `go-sqlite3` that require a C compiler and system dev libraries (`build-base`, `musl-dev`). These are typically absent in the Ambient container, causing govulncheck to hang indefinitely during compilation. Disabling CGO skips C compilation; Go-only symbol analysis still works for vulnerability detection.
+Dynamically decide whether CGO can be enabled. Some repos (e.g. spiffe-spire with `go-sqlite3`) require a C compiler and system dev libraries for CGO. If those are missing, govulncheck hangs during compilation. If CGO works, use it — it gives the most complete analysis by including `//go:build cgo` code paths.
 
 ```bash
 cd "${REPO_DIR}"
 
 if [ ! -s /tmp/govulncheck-source.txt ]; then
-  echo "=== govulncheck source scan (CGO_ENABLED=0) ==="
-  timeout 300 env CGO_ENABLED=0 govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
+  # Step 2b.1: Probe whether CGO compilation is possible
+  echo "=== Checking CGO support ==="
+  CGO_OK=false
+  if command -v gcc >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; then
+    # Compiler exists — try a quick build to verify headers are available
+    timeout 60 env CGO_ENABLED=1 go build ./... > /tmp/cgo-probe.txt 2>&1
+    if [ $? -eq 0 ]; then
+      CGO_OK=true
+      echo "✓ CGO compilation works — using CGO_ENABLED=1 for full coverage"
+    else
+      echo "✗ CGO compilation failed (missing dev libraries?) — falling back to CGO_ENABLED=0"
+      echo "  Probe output: $(head -5 /tmp/cgo-probe.txt)"
+    fi
+  else
+    echo "✗ No C compiler found — using CGO_ENABLED=0"
+  fi
+
+  # Step 2b.2: Run govulncheck with the determined CGO setting
+  if [ "$CGO_OK" = true ]; then
+    echo "=== govulncheck source scan (CGO_ENABLED=1) ==="
+    timeout 300 env CGO_ENABLED=1 govulncheck ./... > /tmp/govulncheck-source.txt 2>&1
+  else
+    echo "=== govulncheck source scan (CGO_ENABLED=0) ==="
+    echo "NOTE: Files behind //go:build cgo tags are excluded from this scan." >> /tmp/govulncheck-source.txt
+    timeout 300 env CGO_ENABLED=0 govulncheck ./... >> /tmp/govulncheck-source.txt 2>&1
+  fi
   SOURCE_EXIT=$?
   if [ $SOURCE_EXIT -eq 124 ]; then
     echo "govulncheck timed out after 300s — relying on manual methods"
@@ -112,6 +136,7 @@ cat /tmp/govulncheck-source.txt
 ```
 
 - IF timed out (exit 124) → note "govulncheck skipped (timeout)" in evidence; **proceed to Method 3 immediately**
+- IF CGO was disabled → note in the report: "CGO-gated code paths were excluded from govulncheck analysis (no C compiler or missing dev libraries)"
 - Save `/tmp/govulncheck-source.txt` as a workflow artifact
 
 **Decision Point — govulncheck is ONE signal. Always continue to Method 3 next.**
