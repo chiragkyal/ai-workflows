@@ -222,6 +222,8 @@ Delegate to the [call-graph-analysis](../call-graph-analysis/SKILL.md) skill.
 - **Pass**: `--algo` preference from user, vulnerable function signature, package path
 - **Receive**: Risk level, call chain, evidence files
 
+> **Scope rule:** Never invoke `callgraph` with `./...`. Always target a specific main package (e.g. `./cmd/controller`, `.`). The tool resolves transitive dependencies automatically. Running on `./...` causes VTA to exhaust resources on repos with >50 packages (external-secrets has 138, spiffe-spire has 300+). See the call-graph-analysis skill for the progressive fallback chain (`vta` → `rta` → `cha`).
+
 **This method is REQUIRED whenever the vulnerable package is present in `go.mod`** — regardless of what Methods 2, 3, or 4 found. Source code analysis (Method 4) is heuristic: it can miss indirect calls through interfaces, generated code, and runtime dispatch. Only a call graph provides provable reachability.
 
 **Valid reasons to skip call graph:**
@@ -336,7 +338,7 @@ Return structured result to parent command:
 - IF govulncheck doesn't know about this CVE → Continue with other methods, note gap
 
 ### Large Codebases
-- IF call graph times out → Follow fallback strategy in call-graph-analysis skill (algorithm fallback, then scope narrowing)
+- IF call graph times out → Follow fallback strategy in call-graph-analysis skill: algorithm fallback (`vta` → `rta` → `cha`), always targeting a specific main package. Never use `./...` as scope.
 
 ### Incomplete CVE Information
 - IF vulnerable function signature unknown → Skip call graph, note `skip_reason: unknown_function_signature`, assign MEDIUM at best — do NOT assign LOW based on source analysis alone
