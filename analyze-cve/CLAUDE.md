@@ -1,6 +1,6 @@
 # CVE Analysis Workflow
 
-Perform comprehensive security vulnerability analysis for Go projects. Given a CVE identifier, gather vulnerability intelligence, analyze the codebase for impact, generate a risk report, and optionally apply fixes.
+Perform comprehensive security vulnerability analysis for Go projects. Given a CVE identifier, gather vulnerability intelligence, analyze the codebase for impact, generate a risk report, optionally apply fixes, and optionally open a GitHub pull request after a verified fix.
 
 ## Arguments
 
@@ -53,7 +53,9 @@ go install golang.org/x/tools/cmd/callgraph@latest
 go install golang.org/x/tools/cmd/digraph@latest
 ```
 
-**Optional:** `graphviz` for visual call graph generation (`brew install graphviz` or `sudo apt-get install graphviz`).
+**Optional:**
+- `graphviz` for visual call graph generation (`brew install graphviz` or `sudo apt-get install graphviz`).
+- `gh` (GitHub CLI) for Phase 6 pull-request creation (`https://cli.github.com/`). Authenticate with `gh auth login`. Missing `gh` does **not** fail Phase 0 — analysis and local fixes still run; Phase 6 is skipped until `gh` is available.
 
 **Internet access** is recommended for CVE data fetching but not required if the user can provide CVE details manually.
 
@@ -82,7 +84,13 @@ go install golang.org/x/tools/cmd/digraph@latest
    ```
 
 3. **If ANY tool is missing** → Display installation instructions and **exit with error**.
-4. **If all tools present** → Continue to Phase 0.3 (if JQL mode), Phase 0.5 (if Jira mode), or Phase 0.7 (if direct CVE mode).
+4. **Optional Phase 6 tool** (warn only, do not exit):
+
+   ```bash
+   which gh 2>/dev/null || echo "OPTIONAL: gh (needed only for Phase 6 GitHub PR creation)"
+   ```
+
+5. **If all required tools present** → Continue to Phase 0.3 (if JQL mode), Phase 0.5 (if Jira mode), or Phase 0.7 (if direct CVE mode).
 
 ---
 
@@ -196,15 +204,15 @@ Use `BRANCH` extracted by `jira-cve-extraction` (e.g. `openshift-4.17`, `ztwim-1
 
 **Branch name mapping** — Jira ticket summaries use a different naming convention from the actual git branches:
 
-| Jira `BRANCH` value | Component group | Git branch |
-|---|---|---|
-| `openshift-X.Y` | Operator SDK, Ansible, must-gather, Secrets Store CSI (Pattern A) | `release-X.Y` |
-| `openshift-X.Y.z` | (same Pattern A components) | `release-X.Y.z` |
-| `cert-manager-X-Y` | cert-manager (Pattern B release repo) | `release-X.Y` |
-| `external-secrets-X-Y` | ESO (Pattern B release repo) | `release-X.Y` |
-| `ztwim-1.0` | ZTWIM (Pattern B release repo) | `release-1.0.0` _(one-time exception; future releases use `release-X.Y`)_ |
-| `ztwim-X.Y` (any other) | ZTWIM (Pattern B release repo) | `release-X.Y` |
-| Any other value | Use verbatim |
+| Jira `BRANCH` value     | Component group                                                   | Git branch                                                                |
+| ----------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `openshift-X.Y`         | Operator SDK, Ansible, must-gather, Secrets Store CSI (Pattern A) | `release-X.Y`                                                             |
+| `openshift-X.Y.z`       | (same Pattern A components)                                       | `release-X.Y.z`                                                           |
+| `cert-manager-X-Y`      | cert-manager (Pattern B release repo)                             | `release-X.Y`                                                             |
+| `external-secrets-X-Y`  | ESO (Pattern B release repo)                                      | `release-X.Y`                                                             |
+| `ztwim-1.0`             | ZTWIM (Pattern B release repo)                                    | `release-1.0.0` _(one-time exception; future releases use `release-X.Y`)_ |
+| `ztwim-X.Y` (any other) | ZTWIM (Pattern B release repo)                                    | `release-X.Y`                                                             |
+| Any other value         | Use verbatim                                                      |
 
 **Verify the branch exists before cloning:**
 
@@ -314,7 +322,7 @@ if [ ! -f "${REPO_DIR}/go.mod" ]; then
 fi
 ```
 
-Run this guard at the start of **Phase 2, Phase 4, and Phase 5**.
+Run this guard at the start of **Phase 2, Phase 4, Phase 5, and Phase 6**.
 
 ---
 
@@ -336,7 +344,7 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 
 ## Phase 2: Codebase Impact Analysis
 
-**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-on-ephemeral-storage-loss) to verify `REPO_DIR` still exists. Re-clone if needed.
+**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 - **Skill**: [codebase-impact-analysis](skills/codebase-impact-analysis/SKILL.md)
   - Sub-skill: [call-graph-analysis](skills/call-graph-analysis/SKILL.md)
@@ -396,7 +404,7 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 
 ## Phase 5: Interactive Fix Application
 
-**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-on-ephemeral-storage-loss) to verify `REPO_DIR` still exists. Re-clone if needed.
+**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 Requires **explicit user approval** before proceeding.
 
@@ -412,18 +420,46 @@ Requires **explicit user approval** before proceeding.
    - Re-check: `govulncheck ./...`
 
 3. **Document Changes**
-   - Summary of changes, files modified, git diff, suggested commit message
+   - Summary of changes, files modified, git diff, suggested commit message (Phase 6 uses this if the user approves a PR)
+
+**Decision Point:**
+- IF verification failed → stop. Do not offer a PR. Leave the tree for the user to inspect.
+- IF verification succeeded → Continue to Phase 6.
+
+---
+
+## Phase 6: GitHub PR Creation
+
+**Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
+
+- **Skill**: [create-fix-pr](skills/create-fix-pr/SKILL.md)
+- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), module bump (`old` → `new`), Phase 5 diff
+- **Output**: GitHub PR URL (created or updated); optional follow-up Jira comment with that URL
+
+Requires **explicit user approval** before any commit, push, or `gh pr create`. This is a separate approval from Phase 5 (applying the fix locally does not imply opening a PR).
+
+1. Ask: "The fix is applied and verified locally. Create a GitHub PR against `<GIT_BRANCH>`?"
+2. IF no → Exit. Leave local changes uncommitted (or committed only if the user asked). Print the suggested commit message from Phase 5.
+3. IF yes → Run `create-fix-pr` (`git` and `gh` are **hard requirements of that skill** — if either is missing or `gh` is unauthenticated, fail Phase 6; do not create the PR another way):
+   - Check open PRs on the same `org/repo` + base branch whose **title** contains this `CVE_ID` or `SOURCE_TICKET` (title only — ignore files, body, and module versions)
+   - If a title match exists, present **stack / wait / independent** and wait for the user; do not guess
+   - Branch from the mapped release branch, commit **the files Phase 5 changed** (for a version bump that is often `go.mod` / `go.sum` / `vendor/`; other remediations may be source or config only) with `UPSTREAM:` commit style when it applies, and `--signoff`
+   - Push and `gh pr create` (or update the stacked PR)
+   - PR title/body include `CVE_ID`, module bump, short CVE description, and — in Jira mode — `Fixes: [TICKET](https://redhat.atlassian.net/browse/TICKET)`
+   - Direct CVE mode (no `--jira`): create the PR **without** Jira links
+4. After the PR exists, post the PR URL as a **new** comment on `SOURCE_TICKET` (do not replace the Phase 4 analysis comment). Skip Jira posting in direct CVE mode.
+5. Embargo abort and "never change code without approval" still apply. Never force-push `release-*` / `main`.
 
 ---
 
 ## Output
 
 - **Format**: Markdown report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`
-- **Content**: Vulnerability details, risk assessment, evidence, remediation recommendations, applied fixes (if approved)
+- **Content**: Vulnerability details, risk assessment, evidence, remediation recommendations, applied fixes (if approved), GitHub PR URL (if Phase 6 ran)
 
 ## Notes
 
 - Focuses on Go-specific vulnerabilities.
 - Falls back to user-provided information if internet access fails.
-- Does NOT make changes without explicit user approval.
+- Does NOT make changes, commits, or pull requests without explicit user approval.
 - Reports are saved locally and not committed to git.

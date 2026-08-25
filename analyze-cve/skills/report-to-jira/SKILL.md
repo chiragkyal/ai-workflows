@@ -37,12 +37,12 @@ echo "${AMBIENT_SESSION_ID:-}"
 
 Build `SESSION_URL` using the first value found:
 
-| Variable present | Value to use |
-|---|---|
-| `AMBIENT_SESSION_URL` | Use directly |
-| `SESSION_URL` | Use directly |
-| `AMBIENT_SESSION_ID` | Construct: `${AMBIENT_BASE_URL}/sessions/${AMBIENT_SESSION_ID}` |
-| None found | Leave blank — omit session link from comment gracefully |
+| Variable present      | Value to use                                                    |
+| --------------------- | --------------------------------------------------------------- |
+| `AMBIENT_SESSION_URL` | Use directly                                                    |
+| `SESSION_URL`         | Use directly                                                    |
+| `AMBIENT_SESSION_ID`  | Construct: `${AMBIENT_BASE_URL}/sessions/${AMBIENT_SESSION_ID}` |
+| None found            | Leave blank — omit session link from comment gracefully         |
 
 Store as `SESSION_URL` (or empty string). This is used in Step 2.
 
@@ -54,19 +54,19 @@ Convert the full Phase 3 report to Jira wiki markup and post it in its entirety.
 
 ### Conversion rules (markdown → Jira wiki markup)
 
-| Markdown | Jira wiki markup |
-|---|---|
-| `## Heading` | `h2. Heading` |
-| `### Heading` | `h3. Heading` |
-| `**bold**` | `*bold*` |
-| `_italic_` | `_italic_` |
-| `` `inline code` `` | `{{inline code}}` |
-| ` ```code block``` ` | `{code}<br>...<br>{code}` |
-| `\| table \| row \|` | `\| table \| row \|` (unchanged) |
-| `\|\| header \|\|` | `\|\| header \|\|` (unchanged) |
-| `- bullet` | `* bullet` |
-| `[text](url)` | `[text\|url]` |
-| `---` (horizontal rule) | `----` |
+| Markdown                | Jira wiki markup                 |
+| ----------------------- | -------------------------------- |
+| `## Heading`            | `h2. Heading`                    |
+| `### Heading`           | `h3. Heading`                    |
+| `**bold**`              | `*bold*`                         |
+| `_italic_`              | `_italic_`                       |
+| `` `inline code` ``     | `{{inline code}}`                |
+| ` ```code block``` `    | `{code}<br>...<br>{code}`        |
+| `\| table \| row \|`    | `\| table \| row \|` (unchanged) |
+| `\|\| header \|\|`      | `\|\| header \|\|` (unchanged)   |
+| `- bullet`              | `* bullet`                       |
+| `[text](url)`           | `[text\|url]`                    |
+| `---` (horizontal rule) | `----`                           |
 
 Prepend the following attribution header before the converted report:
 
@@ -358,3 +358,56 @@ Called from **Phase 4** of the CVE Analysis workflow (see `CLAUDE.md`) as the fi
 
 **Input:** complete report content, CVE ID, risk level, repo URL, `SOURCE_TICKET` (Jira ticket key from `--jira=` — the same ticket the CVE details were read from)  
 **Output:** confirmation of comment and label posted to `SOURCE_TICKET`, or `status: skipped` if no source ticket was provided, or failure message with comment body for manual posting
+
+Also called from **Phase 6** (`create-fix-pr`) for a short follow-up comment that contains only the GitHub PR URL. That path uses the section below and must not replace this analysis comment or change labels.
+
+---
+
+## Follow-up: PR URL comment (Phase 6)
+
+Post a **new** Internal comment on `SOURCE_TICKET` after a remediation PR is opened. Invoked by [create-fix-pr](../create-fix-pr/SKILL.md).
+
+**Do not run this path unless** `SOURCE_TICKET` is set, Phase 6 produced a `PR_URL`, and the user approved opening the PR.
+
+**Do not:**
+
+- Edit or delete the Phase 4 analysis comment
+- Add or remove labels (`ai-cve-analyzed` stays as Phase 4 left it)
+- Re-post the full analysis report
+- Mention embargoed content (if `embargo_status = True`, abort)
+
+### Comment body
+
+Build markdown, then convert to Jira wiki markup using the table in Step 2 when posting via REST:
+
+```markdown
+### Remediation PR opened
+
+A GitHub pull request is open for this CVE.
+
+- **PR:** [<PR_URL>](<PR_URL>)
+- **CVE:** <CVE_ID>
+- **Change:** `<module>` <old> → <new>
+- **Base branch:** <GIT_BRANCH>
+```
+
+### Posting
+
+Use the same procedure as Step 3:
+
+1. REST API with Internal (`Red Hat Employee`) visibility (Step 3a)
+2. If that fails, ask before MCP/jira-cli fallback because those cannot set Internal visibility (Step 3b)
+
+On failure, print the comment in the session for manual paste. Do not treat a Jira follow-up failure as a GitHub PR failure.
+
+**Return:**
+
+```json
+{
+  "skill": "report-to-jira",
+  "status": "success | skipped | failed",
+  "mode": "pr_followup",
+  "source_ticket": "<SOURCE_TICKET>",
+  "pr_url": "<PR_URL>"
+}
+```
