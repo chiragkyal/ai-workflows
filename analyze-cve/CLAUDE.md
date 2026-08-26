@@ -418,10 +418,11 @@ git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 
 1. **Apply Fixes**
    - Dependency bump: update `go.mod`/`go.sum` with `go get -u <package>@<fixed-version>` + `go mod tidy`
+   - **Vendor sync (dependency bumps only):** IF `go.mod`/`go.sum` changed **and** `vendor/` exists → run `go mod vendor` (or `make vendor` if that target exists) now, in Phase 5, before writing `PHASE5_FILES`. Phase 6 no longer runs vendoring — if it did, the generated `vendor/` paths would be missing from the allowlist and silently dropped from the commit.
    - Source changes if required (as identified in Phase 4)
    - Repo-tracked config (YAML, Dockerfiles, scripts) if that is the approved remediation
 
-2. **Verify Changes**
+2. **Verify Changes** (after vendor sync, so the vendored tree is what gets verified)
    - Check for Makefile targets first, fall back to standard Go commands:
      - Verify: `make verify` or `go mod verify`
      - Build: `make build` or `go build ./...`
@@ -430,7 +431,7 @@ git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 
 3. **Document Changes**
    - Summary of changes, files modified, git diff, suggested commit message (Phase 6 uses this if the user approves a PR)
-   - Write `PHASE5_FILES` (one **repo-relative** path per line, no porcelain status prefix) to `${WORK_CVE}/phase5-files.txt`. Include every path Phase 5 added, modified, or deleted — including untracked files. Union of:
+   - Write `PHASE5_FILES` (one **repo-relative** path per line, no porcelain status prefix) to `${WORK_CVE}/phase5-files.txt`. Include every path Phase 5 added, modified, or deleted — including untracked files, and every `vendor/` path touched by the sync above. Union of:
      - porcelain-status paths that are new or whose status code changed vs `phase5-before.status`
      - paths this phase actually edited (so a pre-dirty file Phase 5 touched is not dropped)
    - Exclude `.work/`, analysis reports, and credentials. Do not list pre-existing dirty files that Phase 5 did not touch.
@@ -456,7 +457,8 @@ Requires **explicit user approval** before any commit, push, or `gh pr create`. 
 3. IF yes → Run `create-fix-pr` (`git` and `gh` are **hard requirements of that skill** — if either is missing or `gh` is unauthenticated, fail Phase 6; do not create the PR another way):
    - Check open PRs on the same `org/repo` + base branch whose **title** contains this `CVE_ID` or `SOURCE_TICKET` (title only — ignore files, body, and module versions)
    - If a title match exists, present **stack / wait / independent** and wait for the user; do not guess
-   - Branch from the mapped release branch, commit **only `PHASE5_FILES`** (for a version bump that is often `go.mod` / `go.sum` / `vendor/`; other remediations may be source or config only) with `UPSTREAM:` commit style when it applies, and `--signoff`
+   - Branch from the mapped release branch, commit **only `PHASE5_FILES`** (for a version bump that is often `go.mod` / `go.sum` / `vendor/`, already vendor-synced in Phase 5; other remediations may be source or config only) with `UPSTREAM:` commit style when it applies, and `--signoff`
+   - Validate the staged (and, for `stack`, the branch) path set exactly matches `PHASE5_FILES`; reject/unstage anything extra before continuing
    - Push and `gh pr create` (or update the stacked PR)
    - PR title/body include `CVE_ID`, a summary of the actual Phase 5 change (module/version only when the fix is a dependency bump), short CVE description, and — in Jira mode — `Fixes: [TICKET](https://redhat.atlassian.net/browse/TICKET)`
    - Direct CVE mode (no `--jira`): create the PR **without** Jira links

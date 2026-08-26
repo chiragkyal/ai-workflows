@@ -71,7 +71,7 @@ gh auth status 2>/dev/null || echo "MISSING: gh auth"
    git -C "${REPO_DIR}" diff --stat
    ```
 
-   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → skip to Step 4 (PR may already exist; update or create).
+   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → **validate that branch's changes against `PHASE5_FILES`** (see the check in Step 3b) before skipping to Step 4. A clean worktree only means nothing is *uncommitted*; it does not prove the existing commit(s) contain only Phase 5 paths. IF the branch diff vs `${BASE_BRANCH}` contains paths outside `PHASE5_FILES` → stop and ask the user how to proceed (do not silently include or drop them).
    - IF working tree is clean and HEAD is still `${GIT_BRANCH}` with no Phase 5 commit → return `status: skipped` (`no_local_changes`).
 4. Ask (unless the parent already recorded a yes):
 
@@ -140,7 +140,7 @@ How should I proceed?
 
 Work only inside `REPO_DIR`.
 
-**Vendor (dependency bumps only):** IF Phase 5 was a Go module version bump **and** `vendor/` exists, keep it in sync (`go mod vendor` or `make vendor` if that target exists) and include it in the commit. Skip this for code, config, or workaround remediations that did not change modules.
+**Vendor:** Phase 5 already ran `go mod vendor`/`make vendor` (if applicable) and included any resulting paths in `PHASE5_FILES` before verification. Do **not** run vendor sync here — doing so after `PHASE5_FILES` was written would generate paths that never make it into the allowlist and get silently dropped from the commit. IF a dependency bump is present in `PHASE5_FILES` but `vendor/` looks out of sync (e.g. `go mod vendor` reports diffs) → stop and tell the user to re-run Phase 5, rather than fixing it here.
 
 ### 3a. Branch
 
@@ -195,6 +195,33 @@ done < "${PHASE5_FILES}"
 - Mixed: the union of those paths
 
 Do **not** add `.work/`, analysis reports, or credentials. Do **not** add pre-existing dirty files that are absent from `PHASE5_FILES`. Do **not** `git add` `go.mod` / `vendor/` unless they are on the allowlist.
+
+**Validate the staged set exactly matches the allowlist.** The loop above only *adds* allowlisted paths — it does not prove the index is free of anything else (e.g. leftover pre-existing staged files). Diff the two sets and reject extras instead of committing them silently:
+
+```bash
+git -C "${REPO_DIR}" diff --cached --name-only > "${WORK_CVE}/staged-files.txt"
+
+EXTRA="$(comm -23 <(sort "${WORK_CVE}/staged-files.txt") <(sort "${PHASE5_FILES}"))"
+if [ -n "${EXTRA}" ]; then
+  echo "Unstaging paths not in PHASE5_FILES:"
+  echo "${EXTRA}"
+  while IFS= read -r x; do
+    [ -n "${x}" ] || continue
+    git -C "${REPO_DIR}" restore --staged -- "${x}"
+  done <<< "${EXTRA}"
+fi
+```
+
+IF any path was rejected → tell the user which paths were unstaged and why before continuing. Re-run the diff after unstaging to confirm the index now matches `PHASE5_FILES` exactly (accounting for deletions).
+
+**On a `stack` branch, or when Step 0 skipped ahead because a Phase 5 commit already existed,** run the equivalent check against the branch, not just the index:
+
+```bash
+git -C "${REPO_DIR}" diff --name-only "${BASE_BRANCH}...HEAD" > "${WORK_CVE}/branch-files.txt"
+comm -23 <(sort "${WORK_CVE}/branch-files.txt") <(sort "${PHASE5_FILES}")
+```
+
+IF that reports any path outside `PHASE5_FILES` → stop; do not push or open/update the PR. Ask the user how to proceed (this is committed history, so it cannot be silently unstaged).
 
 **Commit message** (OpenShift `UPSTREAM:` style). Match the **actual** Phase 5 change, not a canned module bump.
 
@@ -395,6 +422,8 @@ Called from **Phase 6** of `CLAUDE.md` after Phase 5 verification succeeds.
 - Never force-push to `BASE_BRANCH` / `main` / `master` / `release-*`
 - Never skip git hooks unless the user asks
 - Never stage paths outside `PHASE5_FILES`; never `git add -A` or `git add .`
+- Never commit/push/PR without validating the staged (and, for `stack`, the branch) path set against `PHASE5_FILES` and rejecting extras
+- Never run vendor sync in Phase 6 — it happens in Phase 5, before `PHASE5_FILES` is written
 - Never include secrets in commit messages, PR text, or Jira comments
 - Stop immediately on embargo
 - Direct CVE mode must still produce a PR
