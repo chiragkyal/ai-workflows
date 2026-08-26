@@ -212,7 +212,7 @@ Use `BRANCH` extracted by `jira-cve-extraction` (e.g. `openshift-4.17`, `ztwim-1
 | `external-secrets-X-Y`  | ESO (Pattern B release repo)                                      | `release-X.Y`                                                             |
 | `ztwim-1.0`             | ZTWIM (Pattern B release repo)                                    | `release-1.0.0` _(one-time exception; future releases use `release-X.Y`)_ |
 | `ztwim-X.Y` (any other) | ZTWIM (Pattern B release repo)                                    | `release-X.Y`                                                             |
-| Any other value         | Use verbatim                                                      |
+| Any other value         | —                                                                 | Use verbatim                                                        |
 
 **Verify the branch exists before cloning:**
 
@@ -406,11 +406,20 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 
 **Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
-Requires **explicit user approval** before proceeding.
+Requires **explicit user approval** before proceeding. Do not change live cluster or production-environment configuration. Repo-tracked config files are allowed only as the approved remediation.
+
+**Before applying anything**, snapshot the worktree so Phase 6 can stage only Phase 5 files (including new untracked paths). `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR`:
+
+```bash
+WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
+mkdir -p "${WORK_CVE}"
+git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
+```
 
 1. **Apply Fixes**
-   - Update `go.mod`/`go.sum`: `go get -u <package>@<fixed-version>` + `go mod tidy`
-   - Modify source code if required (as identified in Phase 4)
+   - Dependency bump: update `go.mod`/`go.sum` with `go get -u <package>@<fixed-version>` + `go mod tidy`
+   - Source changes if required (as identified in Phase 4)
+   - Repo-tracked config (YAML, Dockerfiles, scripts) if that is the approved remediation
 
 2. **Verify Changes**
    - Check for Makefile targets first, fall back to standard Go commands:
@@ -421,6 +430,10 @@ Requires **explicit user approval** before proceeding.
 
 3. **Document Changes**
    - Summary of changes, files modified, git diff, suggested commit message (Phase 6 uses this if the user approves a PR)
+   - Write `PHASE5_FILES` (one **repo-relative** path per line, no porcelain status prefix) to `${WORK_CVE}/phase5-files.txt`. Include every path Phase 5 added, modified, or deleted — including untracked files. Union of:
+     - porcelain-status paths that are new or whose status code changed vs `phase5-before.status`
+     - paths this phase actually edited (so a pre-dirty file Phase 5 touched is not dropped)
+   - Exclude `.work/`, analysis reports, and credentials. Do not list pre-existing dirty files that Phase 5 did not touch.
 
 **Decision Point:**
 - IF verification failed → stop. Do not offer a PR. Leave the tree for the user to inspect.
@@ -433,7 +446,7 @@ Requires **explicit user approval** before proceeding.
 **Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 - **Skill**: [create-fix-pr](skills/create-fix-pr/SKILL.md)
-- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), module bump (`old` → `new`), Phase 5 diff
+- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, and module bump (`old` → `new`) **only if** the fix is a dependency bump
 - **Output**: GitHub PR URL (created or updated); optional follow-up Jira comment with that URL
 
 Requires **explicit user approval** before any commit, push, or `gh pr create`. This is a separate approval from Phase 5 (applying the fix locally does not imply opening a PR).
@@ -443,9 +456,9 @@ Requires **explicit user approval** before any commit, push, or `gh pr create`. 
 3. IF yes → Run `create-fix-pr` (`git` and `gh` are **hard requirements of that skill** — if either is missing or `gh` is unauthenticated, fail Phase 6; do not create the PR another way):
    - Check open PRs on the same `org/repo` + base branch whose **title** contains this `CVE_ID` or `SOURCE_TICKET` (title only — ignore files, body, and module versions)
    - If a title match exists, present **stack / wait / independent** and wait for the user; do not guess
-   - Branch from the mapped release branch, commit **the files Phase 5 changed** (for a version bump that is often `go.mod` / `go.sum` / `vendor/`; other remediations may be source or config only) with `UPSTREAM:` commit style when it applies, and `--signoff`
+   - Branch from the mapped release branch, commit **only `PHASE5_FILES`** (for a version bump that is often `go.mod` / `go.sum` / `vendor/`; other remediations may be source or config only) with `UPSTREAM:` commit style when it applies, and `--signoff`
    - Push and `gh pr create` (or update the stacked PR)
-   - PR title/body include `CVE_ID`, module bump, short CVE description, and — in Jira mode — `Fixes: [TICKET](https://redhat.atlassian.net/browse/TICKET)`
+   - PR title/body include `CVE_ID`, a summary of the actual Phase 5 change (module/version only when the fix is a dependency bump), short CVE description, and — in Jira mode — `Fixes: [TICKET](https://redhat.atlassian.net/browse/TICKET)`
    - Direct CVE mode (no `--jira`): create the PR **without** Jira links
 4. After the PR exists, post the PR URL as a **new** comment on `SOURCE_TICKET` (do not replace the Phase 4 analysis comment). Skip Jira posting in direct CVE mode.
 5. Embargo abort and "never change code without approval" still apply. Never force-push `release-*` / `main`.

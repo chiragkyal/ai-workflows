@@ -387,7 +387,7 @@ A GitHub pull request is open for this CVE.
 
 - **PR:** [<PR_URL>](<PR_URL>)
 - **CVE:** <CVE_ID>
-- **Change:** `<module>` <old> → <new>
+- **Change:** <what Phase 5 changed — `<module>` <old> → <new> only for a dependency bump; otherwise a short source/config summary>
 - **Base branch:** <GIT_BRANCH>
 ```
 

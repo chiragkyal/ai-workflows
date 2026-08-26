@@ -34,9 +34,10 @@ From the parent workflow:
 | `REPO_URL`                            | Phase 0.7                                              | Yes                      |
 | `CVE_ID`                              | Phase 0.5 / direct CVE mode                            | Yes                      |
 | `SOURCE_TICKET`                       | `--jira=` / `--jql=`                                   | No                       |
+| `PHASE5_FILES`                        | Phase 5 allowlist (incl. untracked)                    | Yes                      |
 | Module path, old version, new version | Phase 4 / 5                                            | Yes if a dependency bump |
 | Short CVE description                 | Phase 1                                                | Recommended              |
-| Files changed                         | Phase 5 git diff                                       | Yes                      |
+| Phase 5 change summary                | Phase 5 Document Changes                               | Yes                      |
 
 ---
 
@@ -70,8 +71,8 @@ gh auth status 2>/dev/null || echo "MISSING: gh auth"
    git -C "${REPO_DIR}" diff --stat
    ```
 
-   - IF working tree is clean **and** HEAD is already on a fix branch with the bump committed → skip to Step 4 (PR may already exist; update or create).
-   - IF working tree is clean and HEAD is still `${GIT_BRANCH}` with no bump → return `status: skipped` (`no_local_changes`).
+   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → skip to Step 4 (PR may already exist; update or create).
+   - IF working tree is clean and HEAD is still `${GIT_BRANCH}` with no Phase 5 commit → return `status: skipped` (`no_local_changes`).
 4. Ask (unless the parent already recorded a yes):
 
    ```
@@ -166,21 +167,34 @@ Re-apply the Phase 5 changes on this branch if checking out `BASE_BRANCH` discar
 
 ### 3b. Commit
 
-Stage **the files Phase 5 actually changed** — not a fixed list. `go.mod`, `go.sum`, `go.work`, and `vendor/` are common for **dependency version bumps**, but other CVE remediations may only touch source, config, Dockerfiles, or scripts.
+Stage **only `PHASE5_FILES`**, not the whole worktree. That allowlist is written in Phase 5 (`phase5-files.txt`) and includes new untracked files. `go.mod`, `go.sum`, `go.work`, and `vendor/` are common for **dependency version bumps**, but other CVE remediations may only touch source, config, Dockerfiles, or scripts.
+
+`WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR`. Paths in the allowlist are relative to `REPO_DIR`.
 
 ```bash
-git -C "${REPO_DIR}" status --porcelain
-git -C "${REPO_DIR}" diff --name-only
-git -C "${REPO_DIR}" diff --cached --name-only
+WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
+PHASE5_FILES="${WORK_CVE}/phase5-files.txt"
 ```
 
-Add those remediation paths. Examples:
+IF `phase5-files.txt` is missing or empty → rebuild it from Phase 5 Document Changes (and `phase5-before.status` if present). IF the allowlist still cannot be determined → ask the user. Do **not** fall back to whole-worktree `git diff` / `git add -A` / `git add .`.
 
-- Dependency bump: `go.mod`, `go.sum`, and `go.work` / `vendor/` only if they changed
-- Code/config fix: the source or config files Phase 5 edited
-- Mixed: whatever the Phase 5 diff contains
+```bash
+# inspect current tree for sanity, but do not use it as the stage set
+git -C "${REPO_DIR}" status --porcelain
 
-Do **not** add `.work/`, analysis reports, or credentials. Do **not** `git add` `go.mod` / `vendor/` unless they are in the Phase 5 diff.
+while IFS= read -r f; do
+  [ -n "${f}" ] || continue
+  git -C "${REPO_DIR}" add -- "${f}"
+done < "${PHASE5_FILES}"
+```
+
+`git add -- <path>` stages modifications, deletions, and untracked files. Examples of what belongs on the allowlist:
+
+- Dependency bump: `go.mod`, `go.sum`, and `go.work` / `vendor/` only if Phase 5 changed them
+- Code/config fix: the source or config files Phase 5 added or edited
+- Mixed: the union of those paths
+
+Do **not** add `.work/`, analysis reports, or credentials. Do **not** add pre-existing dirty files that are absent from `PHASE5_FILES`. Do **not** `git add` `go.mod` / `vendor/` unless they are on the allowlist.
 
 **Commit message** (OpenShift `UPSTREAM:` style). Match the **actual** Phase 5 change, not a canned module bump.
 
@@ -380,6 +394,7 @@ Called from **Phase 6** of `CLAUDE.md` after Phase 5 verification succeeds.
 - Never commit, push, or open a PR without explicit user approval
 - Never force-push to `BASE_BRANCH` / `main` / `master` / `release-*`
 - Never skip git hooks unless the user asks
+- Never stage paths outside `PHASE5_FILES`; never `git add -A` or `git add .`
 - Never include secrets in commit messages, PR text, or Jira comments
 - Stop immediately on embargo
 - Direct CVE mode must still produce a PR
