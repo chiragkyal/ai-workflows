@@ -121,7 +121,7 @@ IF any match:
 
 - **`AUTO_APPROVE=no`** → present the list and wait for the user:
 
-  ```
+  ```text
   Open PR(s) on <ORG/REPO> base <BASE_BRANCH> already have this CVE/Jira in the title:
 
     #<N>  <title>  <url>  head=<branch>
