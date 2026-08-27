@@ -21,6 +21,37 @@ Optional flags:
   - `rta` — Good balance of precision and speed
   - `cha` — Fast, less precise
   - `static` — Fastest, least precise
+- **--auto-approve=yes|no** (default: `no`): Run end-to-end without interactive approval prompts. See [Autonomous Mode](#autonomous-mode---auto-approveyesno) below. Intended for scheduled/periodic automation.
+
+## Autonomous Mode (`--auto-approve=yes|no`)
+
+`AUTO_APPROVE` is parsed **once**, in Phase 0, from `--auto-approve` (default `no`). It is the **single source of truth** for every approval prompt in this workflow and its skills — every phase and skill below reads this same value instead of asking independently. Do not add new local "yes/no" prompts anywhere in this workflow; gate them on `AUTO_APPROVE` the same way.
+
+`AUTO_APPROVE` only answers **yes/no risk decisions** that a human would otherwise approve — it does **not** authorize guessing when required information is missing or ambiguous. Guessing in those cases (wrong repo, wrong branch, wrong CVE, wrong file set) is a correctness/security risk, not a convenience trade-off, so those points **always hard-fail** regardless of `AUTO_APPROVE`, exactly as they do today for a human who doesn't answer.
+
+| # | Decision point | Interactive (`AUTO_APPROVE=no`) | `AUTO_APPROVE=yes` |
+|---|---|---|---|
+| 1 | Phase 2: risk = `NEEDS_REVIEW` — proceed to remediation guidance? | Ask | Proceed (yes) |
+| 2 | Phase 4: apply fixes automatically (→ Phase 5)? | Ask | Proceed (yes) |
+| 3 | Phase 6: create a GitHub PR (→ `create-fix-pr`)? | Ask | Proceed (yes) |
+| 4 | `create-fix-pr` Step 2: conflicting open PR found (title match) | Ask: stack / wait / independent — do not guess | Always **`wait`** — skip PR creation this run (`status: skipped`, `user_wait_for_pr_auto`); never auto-stack onto or auto-duplicate someone else's PR |
+| 5 | `report-to-jira` Step 3b: Internal-visibility REST post failed, only public MCP/CLI fallback available — proceed? | Ask | Proceed (yes) — post via the fallback; the comment is clearly logged as posted with **public** visibility instead of Internal |
+
+**Always hard-fail regardless of `AUTO_APPROVE`** (never guess):
+
+| Decision point | Behavior |
+|---|---|
+| Phase 0.7 Step 1: multiple pre-cloned repos found | Exit with error listing the candidates; require `--repo=` |
+| Phase 0.7 Step 2: repo URL/image still unresolved | Exit with error (unchanged from today) |
+| Phase 0.7 Step 3a: mapped Jira branch doesn't exist, and the verbatim-Jira-value fallback *also* doesn't exist | Exit with error; do not invent a branch name |
+| `jira-cve-extraction` Step 4: multiple CVE IDs found in one ticket | Exit with error listing them; require the caller to disambiguate (e.g. re-run with a direct `CVE-ID`) |
+| `cve-intelligence-gathering` Step 6: no CVE data from any source | Exit with error; do not proceed on fabricated CVE details |
+| `create-fix-pr` Step 3b: `PHASE5_FILES` allowlist missing/empty and cannot be rebuilt | Return `status: failed` (`phase5_files_missing`) immediately — never prompt, even when `AUTO_APPROVE=no` |
+| `create-fix-pr` Step 0/3b: branch diff contains paths outside `PHASE5_FILES` | Return `status: failed` (`phase5_files_mismatch`) immediately — never prompt, even when `AUTO_APPROVE=no`; committed history is never silently dropped or included |
+
+All other absolute rules are unaffected by `AUTO_APPROVE`: embargo abort, credential handling, no force-push to `release-*`/`main`/`master`, no `--no-verify`, and the production-configuration restriction in Phase 5.
+
+---
 
 ## Security — Credential Handling
 
@@ -72,6 +103,7 @@ go install golang.org/x/tools/cmd/digraph@latest
    - Extract `--repo` value if provided (optional); store as `REPO_INPUT`.
    - Extract `--algo` value if provided (optional, default: `vta`).
    - Valid `--algo` values: `vta`, `rta`, `cha`, `static`.
+   - Extract `--auto-approve` value if provided (optional, default: `no`); store as `AUTO_APPROVE`. Valid values: `yes`, `no` (case-insensitive). Any other value → warn and treat as `no`. See [Autonomous Mode](#autonomous-mode---auto-approveyesno) — this single value is passed to every phase and skill below instead of asking independently.
 
 2. **Check Required Tools**
 
@@ -141,8 +173,8 @@ results = mcp__atlassian__jira_search_issues(
 **Decision Point:**
 - IF ticket not found or access denied → Exit with error
 - IF `embargo_status = True` → **Exit immediately. Do not proceed. Do not output any ticket data.**
-- IF no CVE ID found → Prompt user to supply manually; if declined → Exit
-- IF no image name found → Leave blank; Phase 0.7 will prompt
+- IF no CVE ID found → IF `AUTO_APPROVE=no`, prompt user to supply manually; if declined → Exit. IF `AUTO_APPROVE=yes`, exit immediately (never gated — see `jira-cve-extraction`).
+- IF no image name found → Leave blank; Phase 0.7 will prompt (or hard-fail if `AUTO_APPROVE=yes`, per its own rules)
 - IF resolved → Set `CVE_ID` + `IMAGE_NAME`, carry `jira_context` (includes CVSS, CWE, priority, versions) forward → Continue to Phase 0.7
 
 ---
@@ -174,7 +206,7 @@ done
 ```
 
 - IF either path contains exactly one directory → use it as `REPO_DIR`, skip to Step 3.
-- IF either path contains multiple directories → list them, ask user which to analyse.
+- IF either path contains multiple directories → **always** list them and exit with an error asking the caller to re-run with `--repo=`. This is not gated by `AUTO_APPROVE` — guessing the wrong repo is a correctness risk, not a convenience trade-off.
 - IF both are empty → continue to Step 2.
 
 ### Step 2: Resolve Repository URL
@@ -185,10 +217,10 @@ Determine `REPO_URL` using the first applicable source:
    - Full URL (`https://...`) → use directly.
    - Short name or image name → run `image-repo-mapping` skill.
 2. **`--jira` was used and `IMAGE_NAME` was extracted** → run `image-repo-mapping` skill with `IMAGE_NAME`.
-3. **Neither** → prompt user: "Please provide the repository URL or image name (e.g. https://github.com/openshift/cert-manager-operator or --repo=cert-manager-operator-rhel9)."
+3. **Neither** → prompt user: "Please provide the repository URL or image name (e.g. https://github.com/openshift/cert-manager-operator or --repo=cert-manager-operator-rhel9)." IF `AUTO_APPROVE=yes` (no user to prompt) → skip straight to exiting with error below.
 
 **Decision Point:**
-- IF `REPO_URL` still unresolved after prompting → Exit with error.
+- IF `REPO_URL` still unresolved after prompting → Exit with error. Always exits this way regardless of `AUTO_APPROVE` — there is no safe default repository to guess.
 
 ### Step 3: Resolve the Target Branch and Repository Pattern
 
@@ -221,7 +253,9 @@ git ls-remote --heads "${REPO_URL}" "${GIT_BRANCH}" | grep -q "${GIT_BRANCH}"
 ```
 
 - IF branch exists → clone with `-b "${GIT_BRANCH}"` in Step 3b.
-- IF branch does not exist → try the Jira value verbatim as a fallback, then warn user and ask to confirm or provide the correct branch name.
+- IF branch does not exist → try the Jira value verbatim as a fallback (same automatic step regardless of `AUTO_APPROVE`).
+  - IF the verbatim fallback branch exists → use it, and note in the report that the mapped branch name was not found and the verbatim Jira value was used instead.
+  - IF the verbatim fallback **also** does not exist → IF `AUTO_APPROVE=no`, warn the user and ask them to confirm or provide the correct branch name. IF `AUTO_APPROVE=yes`, there is no one to ask — **exit with error** instead of guessing a branch name. This case is never gated by `AUTO_APPROVE`.
 - IF `BRANCH` was not extracted (direct CVE mode, no Jira ticket) → clone default branch; note this in the analysis.
 
 ### Step 3c (Pattern B only): Read `.gitmodules` and Resolve Component Repo
@@ -336,7 +370,7 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 
 **Decision Point:**
 - IF invalid CVE format → Exit with error
-- IF CVE not found AND user declines to provide info → Exit with error
+- IF CVE not found AND (user declines to provide info, or `AUTO_APPROVE=yes` with no one to ask) → Exit with error
 - IF CVE is not Go-related → Generate "Not Applicable" report → Exit
 - IF CVE details found → Continue to Phase 2
 
@@ -355,9 +389,7 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 **Decision Point:**
 - IF HIGH RISK or MEDIUM RISK → Generate report (Phase 3) → Proceed to Phase 4
 - IF LOW RISK → Generate report (Phase 3) → Recommend manual review → Exit
-- IF NEEDS REVIEW → Generate report (Phase 3) → Ask user if they want remediation guidance
-  - IF yes → Proceed to Phase 4
-  - IF no → Exit
+- IF NEEDS REVIEW → Generate report (Phase 3) → IF `AUTO_APPROVE=no`, ask user if they want remediation guidance: IF yes → Proceed to Phase 4; IF no → Exit. IF `AUTO_APPROVE=yes` → proceed to Phase 4 automatically (treated as yes).
 
 ---
 
@@ -390,14 +422,13 @@ Generate analysis report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`.
 
 **Decision Point:**
 - Present remediation plan to user
-- Ask: "Would you like me to apply these fixes automatically?"
-- IF yes → Continue to Phase 5
-- IF no → Exit with report and manual instructions
+- IF `AUTO_APPROVE=no` → Ask: "Would you like me to apply these fixes automatically?" IF yes → Continue to Phase 5. IF no → Exit with report and manual instructions.
+- IF `AUTO_APPROVE=yes` → Continue to Phase 5 automatically (treated as yes). Still present the plan in the session output first — automation skips the prompt, not the transparency.
 
 After presenting the report (regardless of whether the user proceeds to Phase 5), invoke the report-to-jira skill:
 
 - **Skill**: [report-to-jira](skills/report-to-jira/SKILL.md)
-- **Input**: completed report, CVE ID, risk level, repo URL, source Jira ticket key (if `--jira` was provided)
+- **Input**: completed report, CVE ID, risk level, repo URL, source Jira ticket key (if `--jira` was provided), `AUTO_APPROVE`
 - **Output**: comment and label posted to `SOURCE_TICKET` (the same ticket the CVE details were read from); skipped silently if no `--jira` was provided; if posting fails, comment body is displayed in session for manual copy-paste
 
 ---
@@ -406,7 +437,7 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 
 **Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
-Requires **explicit user approval** before proceeding. Do not change live cluster or production-environment configuration. Repo-tracked config files are allowed only as the approved remediation.
+Requires **explicit approval** before proceeding — this is the Phase 4 decision point above (`AUTO_APPROVE=yes` counts as that approval; no separate prompt here). Do not change live cluster or production-environment configuration. Repo-tracked config files are allowed only as the approved remediation.
 
 **Before applying anything**, snapshot the worktree so Phase 6 can stage only Phase 5 files (including new untracked paths). `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR`:
 
@@ -447,16 +478,16 @@ git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 **Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 - **Skill**: [create-fix-pr](skills/create-fix-pr/SKILL.md)
-- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, and module bump (`old` → `new`) **only if** the fix is a dependency bump
+- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, module bump (`old` → `new`) **only if** the fix is a dependency bump, and `AUTO_APPROVE`
 - **Output**: GitHub PR URL (created or updated); optional follow-up Jira comment with that URL
 
-Requires **explicit user approval** before any commit, push, or `gh pr create`. This is a separate approval from Phase 5 (applying the fix locally does not imply opening a PR).
+Requires **explicit approval** before any commit, push, or `gh pr create`. This is a separate approval from Phase 5 (applying the fix locally does not imply opening a PR) — `AUTO_APPROVE=yes` must satisfy both approvals independently, since a user could legitimately want fixes applied but PR creation left to them (not possible when `AUTO_APPROVE` is a single flag for a scheduled run, but the two gates stay conceptually distinct in the docs below).
 
-1. Ask: "The fix is applied and verified locally. Create a GitHub PR against `<GIT_BRANCH>`?"
-2. IF no → Exit. Leave local changes uncommitted (or committed only if the user asked). Print the suggested commit message from Phase 5.
-3. IF yes → Run `create-fix-pr` (`git` and `gh` are **hard requirements of that skill** — if either is missing or `gh` is unauthenticated, fail Phase 6; do not create the PR another way):
+1. IF `AUTO_APPROVE=no` → Ask: "The fix is applied and verified locally. Create a GitHub PR against `<GIT_BRANCH>`?" IF no → Exit. Leave local changes uncommitted (or committed only if the user asked). Print the suggested commit message from Phase 5.
+2. IF `AUTO_APPROVE=yes` → treat as yes automatically, skip the prompt.
+3. IF proceeding → Run `create-fix-pr`, passing `AUTO_APPROVE` through (`git` and `gh` are **hard requirements of that skill** — if either is missing or `gh` is unauthenticated, fail Phase 6; do not create the PR another way):
    - Check open PRs on the same `org/repo` + base branch whose **title** contains this `CVE_ID` or `SOURCE_TICKET` (title only — ignore files, body, and module versions)
-   - If a title match exists, present **stack / wait / independent** and wait for the user; do not guess
+   - If a title match exists: IF `AUTO_APPROVE=no` → present **stack / wait / independent** and wait for the user; do not guess. IF `AUTO_APPROVE=yes` → always **`wait`** (return `status: skipped`, `user_wait_for_pr_auto`, with the existing PR URL) — never auto-stack onto or auto-duplicate someone else's PR unattended.
    - Branch from the mapped release branch, commit **only `PHASE5_FILES`** (for a version bump that is often `go.mod` / `go.sum` / `vendor/`, already vendor-synced in Phase 5; other remediations may be source or config only) with `UPSTREAM:` commit style when it applies, and `--signoff`
    - Validate the staged (and, for `stack`, the branch) path set exactly matches `PHASE5_FILES`; reject/unstage anything extra before continuing
    - Push and `gh pr create` (or update the stacked PR)
@@ -476,5 +507,5 @@ Requires **explicit user approval** before any commit, push, or `gh pr create`. 
 
 - Focuses on Go-specific vulnerabilities.
 - Falls back to user-provided information if internet access fails.
-- Does NOT make changes, commits, or pull requests without explicit user approval.
+- Does NOT make changes, commits, or pull requests without explicit approval — either interactive, or given once upfront via `--auto-approve=yes` (see [Autonomous Mode](#autonomous-mode---auto-approveyesno)).
 - Reports are saved locally and not committed to git.

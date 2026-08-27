@@ -24,4 +24,4 @@
 
 | Workflow | Description |
 |----------|-------------|
-| [analyze-cve](analyze-cve/) | Analyze a Go codebase for CVE vulnerabilities, assess impact via call graph analysis, generate a remediation plan, and optionally open a GitHub PR after a verified fix |
+| [analyze-cve](analyze-cve/) | Analyze a Go codebase for CVE vulnerabilities, assess impact via call graph analysis, generate a remediation plan, and optionally open a GitHub PR after a verified fix. Supports `--auto-approve=yes` for unattended/scheduled runs. |

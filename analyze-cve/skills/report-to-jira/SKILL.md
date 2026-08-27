@@ -18,6 +18,7 @@ Before posting, verify that the following are available from the parent workflow
 - **`SOURCE_TICKET`** — the Jira ticket key from `--jira=` (e.g. `OCPBUGS-12345`). This is the only ticket this skill will write to.
 - Risk level (`HIGH` / `MEDIUM` / `LOW` / `NEEDS_REVIEW`)
 - Repository analysed (e.g. `https://github.com/openshift/spire-operator`)
+- `AUTO_APPROVE` (`yes`/`no`, default `no`) — governs the Step 3b public-visibility fallback prompt
 
 **If `SOURCE_TICKET` is not available** (direct CVE mode — no `--jira` was provided): return `status: skipped` with reason `"no_source_ticket"`. There is no Jira ticket to post to.
 
@@ -163,24 +164,28 @@ The Ambient Jira integration handles authentication transparently through the MC
 
 > ⚠️ The MCP tool does not support the `visibility` field — the comment will be visible to all Jira users, not restricted to Red Hat employees.
 
-Before posting via MCP, **ask the user**:
+This visibility downgrade is governed by `AUTO_APPROVE` like any other approval point in this workflow — see [Autonomous Mode](../../CLAUDE.md#autonomous-mode---auto-approveyesno).
 
-```
-⚠️ REST API unavailable. Fallback (MCP tool) cannot set Internal visibility — comment will be public. Proceed?
-```
+- IF `AUTO_APPROVE=no` → **ask the user**:
 
-- IF user says **yes** → post:
-  ```python
-  mcp__atlassian__jira_add_issue_comment(
-      issue_key=SOURCE_TICKET,
-      comment_body="<constructed comment from Step 2>"
-  )
   ```
-- IF user says **no** → display the full comment body in the session for manual posting with Internal visibility.
+  ⚠️ REST API unavailable. Fallback (MCP tool) cannot set Internal visibility — comment will be public. Proceed?
+  ```
+
+  - IF user says **yes** → post:
+    ```python
+    mcp__atlassian__jira_add_issue_comment(
+        issue_key=SOURCE_TICKET,
+        comment_body="<constructed comment from Step 2>"
+    )
+    ```
+  - IF user says **no** → display the full comment body in the session for manual posting with Internal visibility.
+
+- IF `AUTO_APPROVE=yes` → treat as yes automatically, post via the fallback (same call as above). **Clearly log** that this comment was posted with public visibility instead of Internal, since `AUTO_APPROVE` traded that off for an unattended run.
 
 **Fallback — jira-cli** (if MCP is also unavailable):
 
-Ask the same one-line question. Only proceed if the user confirms:
+Same `AUTO_APPROVE` gating as above. IF `AUTO_APPROVE=no`, ask the same one-line question and only proceed if the user confirms. IF `AUTO_APPROVE=yes`, proceed automatically and log the visibility downgrade:
 
 ```bash
 jira issue comment add "${SOURCE_TICKET}" \
@@ -188,7 +193,7 @@ jira issue comment add "${SOURCE_TICKET}" \
   --no-input
 ```
 
-If the user declines, display the comment body for manual posting.
+If the user declines (interactive mode only), display the comment body for manual posting.
 
 ```bash
 jira issue comment add "${SOURCE_TICKET}" \
