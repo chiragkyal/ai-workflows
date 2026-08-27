@@ -72,7 +72,7 @@ gh auth status 2>/dev/null || echo "MISSING: gh auth"
    git -C "${REPO_DIR}" diff --stat
    ```
 
-   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → **validate that branch's changes against `PHASE5_FILES`** (see the check in Step 3b) before skipping to Step 4. A clean worktree only means nothing is *uncommitted*; it does not prove the existing commit(s) contain only Phase 5 paths. IF the branch diff vs `${BASE_BRANCH}` contains paths outside `PHASE5_FILES` → **stop; this is never gated by `AUTO_APPROVE`.** IF `AUTO_APPROVE=no`, ask the user how to proceed. IF `AUTO_APPROVE=yes`, there is no one to ask — return `status: failed` (`phase5_files_mismatch`) rather than silently including or dropping the extra paths.
+   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → **validate that branch's changes against `PHASE5_FILES`** (see the check in Step 3b) before skipping to Step 4. A clean worktree only means nothing is *uncommitted*; it does not prove the existing commit(s) contain only Phase 5 paths. IF the branch diff vs `${BASE_BRANCH}` contains paths outside `PHASE5_FILES` → **always return `status: failed` (`phase5_files_mismatch`) immediately. Never gated by `AUTO_APPROVE` and never prompt** — regardless of whether `AUTO_APPROVE` is `yes` or `no`, do not ask the user and do not continue; silently including or dropping the extra committed paths is not an acceptable outcome either way.
    - IF working tree is clean and HEAD is still `${GIT_BRANCH}` with no Phase 5 commit → return `status: skipped` (`no_local_changes`).
 4. IF `AUTO_APPROVE=no` (and the parent hasn't already recorded a yes) → Ask:
 
@@ -183,7 +183,7 @@ WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
 PHASE5_FILES="${WORK_CVE}/phase5-files.txt"
 ```
 
-IF `phase5-files.txt` is missing or empty → rebuild it from Phase 5 Document Changes (and `phase5-before.status` if present). IF the allowlist still cannot be determined → **this is never gated by `AUTO_APPROVE`**: IF `AUTO_APPROVE=no`, ask the user. IF `AUTO_APPROVE=yes`, there is no one to ask — return `status: failed` (`phase5_files_missing`). Do **not** fall back to whole-worktree `git diff` / `git add -A` / `git add .` in either case.
+IF `phase5-files.txt` is missing or empty → rebuild it from Phase 5 Document Changes (and `phase5-before.status` if present). IF the allowlist still cannot be determined → **always return `status: failed` (`phase5_files_missing`) immediately. Never gated by `AUTO_APPROVE` and never prompt** — regardless of `AUTO_APPROVE`, do not ask the user and do not continue. Do **not** fall back to whole-worktree `git diff` / `git add -A` / `git add .` in any case.
 
 ```bash
 # inspect current tree for sanity, but do not use it as the stage set
@@ -228,7 +228,7 @@ git -C "${REPO_DIR}" diff --name-only "${BASE_BRANCH}...HEAD" > "${WORK_CVE}/bra
 comm -23 <(sort "${WORK_CVE}/branch-files.txt") <(sort "${PHASE5_FILES}")
 ```
 
-IF that reports any path outside `PHASE5_FILES` → stop; do not push or open/update the PR. **Never gated by `AUTO_APPROVE`** (this is committed history, so it cannot be silently unstaged): IF `AUTO_APPROVE=no`, ask the user how to proceed. IF `AUTO_APPROVE=yes`, return `status: failed` (`phase5_files_mismatch`) for manual follow-up.
+IF that reports any path outside `PHASE5_FILES` → stop; do not push or open/update the PR. **Always return `status: failed` (`phase5_files_mismatch`) immediately, for manual follow-up. Never gated by `AUTO_APPROVE` and never prompt** — this is committed history, so it cannot be silently unstaged, and regardless of `AUTO_APPROVE` there is no safe way to continue without a human reviewing the branch directly.
 
 **Commit message** (OpenShift `UPSTREAM:` style). Match the **actual** Phase 5 change, not a canned module bump.
 

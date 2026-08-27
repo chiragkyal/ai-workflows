@@ -46,8 +46,8 @@ Optional flags:
 | Phase 0.7 Step 3a: mapped Jira branch doesn't exist, and the verbatim-Jira-value fallback *also* doesn't exist | Exit with error; do not invent a branch name |
 | `jira-cve-extraction` Step 4: multiple CVE IDs found in one ticket | Exit with error listing them; require the caller to disambiguate (e.g. re-run with a direct `CVE-ID`) |
 | `cve-intelligence-gathering` Step 6: no CVE data from any source | Exit with error; do not proceed on fabricated CVE details |
-| `create-fix-pr` Step 3b: `PHASE5_FILES` allowlist missing/empty and cannot be rebuilt | Return `status: failed` (`phase5_files_missing`) |
-| `create-fix-pr` Step 0/3b: branch or staged path set contains paths outside `PHASE5_FILES` | Stop; return failure requiring manual review (committed history — never silently drop or include) |
+| `create-fix-pr` Step 3b: `PHASE5_FILES` allowlist missing/empty and cannot be rebuilt | Return `status: failed` (`phase5_files_missing`) immediately — never prompt, even when `AUTO_APPROVE=no` |
+| `create-fix-pr` Step 0/3b: branch diff contains paths outside `PHASE5_FILES` | Return `status: failed` (`phase5_files_mismatch`) immediately — never prompt, even when `AUTO_APPROVE=no`; committed history is never silently dropped or included |
 
 All other absolute rules are unaffected by `AUTO_APPROVE`: embargo abort, credential handling, no force-push to `release-*`/`main`/`master`, no `--no-verify`, and the production-configuration restriction in Phase 5.
 
