@@ -8,7 +8,7 @@ Exactly one of the following input modes is required:
 
 - **CVE-ID** — Direct CVE identifier (format: `CVE-YYYY-NNNNN`, case-insensitive). Use when you already know the CVE.
 - **--jira=PROJ-NNN** — Red Hat Jira ticket key (e.g. `--jira=OCPBUGS-12345`). The workflow fetches the ticket and extracts the CVE ID from it. Use when you are starting from a Jira issue.
-- **--jql="..."** — JQL query (e.g. `--jql="project = OCPBUGS AND labels = needs-cve-analysis"`). The workflow fetches matching issues, processes **only the first result**, and logs the rest as skipped. Use when you want to pick a ticket automatically from a queue.
+- **--jql="..."** — JQL query (e.g. `--jql="project = OCPBUGS AND labels = needs-cve-analysis"`). The workflow fetches a batch of matching issues, filters out any already labeled `ai-cve-analyzed`, and processes exactly **one** of the remainder per run (see [Phase 0.3](#phase-03-jql-resolution-only-when---jql-is-provided) for selection rules). Re-running the same JQL periodically works through the queue over multiple invocations. Use when you want to pick a ticket automatically from a queue.
 
 Optional flags:
 
@@ -128,30 +128,58 @@ go install golang.org/x/tools/cmd/digraph@latest
 
 ## Phase 0.3: JQL Resolution _(only when `--jql` is provided)_
 
-Run the JQL query, take the **first result only**, and continue as if `--jira=<first-ticket>` was provided.
+Run the JQL query once, fetch a small batch of candidates, and select exactly **one** ticket to process this run — this phase never drains a whole queue in a single invocation. The rest are left for a future run.
 
 ```python
 results = mcp__atlassian__jira_search_issues(
     jql=JQL_QUERY,
     start_at=0,
-    max_results=10   # fetch a few to log the skipped ones
+    max_results=10   # a candidate batch, not a work queue to process in one run
 )
 ```
 
 **Decision Point:**
 - IF query returns 0 results → exit with: `No Jira issues matched the JQL query: <JQL_QUERY>`
-- IF query returns 1 or more results:
-  - Set `JIRA_TICKET = results[0].key`
-  - Print a summary table of all returned issues, clearly marking which is being processed:
+- IF query returns 1 or more results → continue to Step 1.
+
+### Step 1: Filter Out Already-Processed Tickets
+
+The default search fields already include `labels` — no extra fetch needed. Partition the batch:
+
+```python
+unprocessed = [r for r in results if "ai-cve-analyzed" not in r["fields"]["labels"]]
+already_done = [r for r in results if "ai-cve-analyzed" in r["fields"]["labels"]]
+```
+
+This exists to avoid a "stuck forever" failure mode: naively always taking `results[0]` would keep re-selecting the same already-processed ticket on every scheduled re-run whenever the caller's JQL doesn't explicitly exclude `ai-cve-analyzed` (Jira never removes a queue label like `needs-cve-analysis` on its own just because this workflow ran). Filtering here — not just relying on the idempotency check in `jira-cve-extraction` Step 2.5 — is what makes repeatedly invoking the *same* JQL an actual way to drain a queue over time.
+
+- IF `unprocessed` is empty (every fetched candidate already has `ai-cve-analyzed`) → exit with:
 
   ```
-  JQL matched <N> issue(s). Processing the first; the rest are skipped this run.
-
-  ✅  <PROJ-NNN>  <summary>          ← processing now
-  ⏭   <PROJ-NNN>  <summary>          ← skipped
-  ⏭   <PROJ-NNN>  <summary>          ← skipped
-  ...
+  All <N> ticket(s) matching this JQL in the fetched batch are already processed (ai-cve-analyzed).
+  There may be more matches beyond this batch of <max_results> — narrow the JQL or re-run later.
   ```
+
+  Do not fall back to an already-processed ticket, and do not fetch further pages automatically.
+
+### Step 2: Select One Ticket from the Unprocessed Set
+
+- IF `JQL_QUERY` contains an explicit `ORDER BY` clause (case-insensitive substring match) → **respect it**: select `unprocessed[0]`, i.e. the first unprocessed ticket in the caller's requested order (e.g. oldest-first, highest-priority-first).
+- IF `JQL_QUERY` has **no** `ORDER BY` clause → Jira's default ordering is not a documented/guaranteed sort, so **pick uniformly at random** from `unprocessed` instead of always taking whichever ticket happens to sort first. Combined with Step 1's filtering, this means repeated invocations of the same unordered JQL naturally work through the whole matching set over time instead of fixating on one ticket.
+- Set `JIRA_TICKET` to the selected ticket's key.
+
+### Step 3: Report
+
+Print a summary table covering every fetched candidate, not just the selected one:
+
+```
+JQL matched <N> issue(s) in this batch (there may be more beyond max_results=10).
+
+✅  <PROJ-NNN>  <summary>          ← selected — processing now
+♻️   <PROJ-NNN>  <summary>          ← already processed (ai-cve-analyzed) — skipped
+⏭   <PROJ-NNN>  <summary>          ← unprocessed, not selected this run — left for a future run
+...
+```
 
 - Continue to Phase 0.5 with `JIRA_TICKET` set.
 
