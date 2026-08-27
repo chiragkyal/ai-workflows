@@ -5,7 +5,7 @@ description: After a CVE fix is applied and verified locally, create (or update)
 
 # Create Fix PR
 
-Opens a GitHub pull request for the CVE fix already applied in `REPO_DIR` (Phase 5). Never commits, pushes, or opens a PR without **explicit user approval**. Direct CVE mode (no `--jira`) still creates the PR; it just omits Jira `Fixes:` links and the Jira follow-up comment.
+Opens a GitHub pull request for the CVE fix already applied in `REPO_DIR` (Phase 5). Never commits, pushes, or opens a PR without **explicit approval** — interactive, or `AUTO_APPROVE=yes` recorded once upfront (see [Autonomous Mode](../../CLAUDE.md#autonomous-mode---auto-approveyesno)). Direct CVE mode (no `--jira`) still creates the PR; it just omits Jira `Fixes:` links and the Jira follow-up comment.
 
 Called from **Phase 6** of the parent workflow after Phase 5 verify succeeds.
 
@@ -34,6 +34,7 @@ From the parent workflow:
 | `REPO_URL`                            | Phase 0.7                                              | Yes                      |
 | `CVE_ID`                              | Phase 0.5 / direct CVE mode                            | Yes                      |
 | `SOURCE_TICKET`                       | `--jira=` / `--jql=`                                   | No                       |
+| `AUTO_APPROVE`                        | Phase 0 (`--auto-approve`, default `no`)               | Yes                      |
 | `PHASE5_FILES`                        | Phase 5 allowlist (incl. untracked)                    | Yes                      |
 | Module path, old version, new version | Phase 4 / 5                                            | Yes if a dependency bump |
 | Short CVE description                 | Phase 1                                                | Recommended              |
@@ -71,9 +72,9 @@ gh auth status 2>/dev/null || echo "MISSING: gh auth"
    git -C "${REPO_DIR}" diff --stat
    ```
 
-   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → **validate that branch's changes against `PHASE5_FILES`** (see the check in Step 3b) before skipping to Step 4. A clean worktree only means nothing is *uncommitted*; it does not prove the existing commit(s) contain only Phase 5 paths. IF the branch diff vs `${BASE_BRANCH}` contains paths outside `PHASE5_FILES` → stop and ask the user how to proceed (do not silently include or drop them).
+   - IF working tree is clean **and** HEAD is already on a fix branch with the Phase 5 remediation committed (dependency bump, source, or config) → **validate that branch's changes against `PHASE5_FILES`** (see the check in Step 3b) before skipping to Step 4. A clean worktree only means nothing is *uncommitted*; it does not prove the existing commit(s) contain only Phase 5 paths. IF the branch diff vs `${BASE_BRANCH}` contains paths outside `PHASE5_FILES` → **stop; this is never gated by `AUTO_APPROVE`.** IF `AUTO_APPROVE=no`, ask the user how to proceed. IF `AUTO_APPROVE=yes`, there is no one to ask — return `status: failed` (`phase5_files_mismatch`) rather than silently including or dropping the extra paths.
    - IF working tree is clean and HEAD is still `${GIT_BRANCH}` with no Phase 5 commit → return `status: skipped` (`no_local_changes`).
-4. Ask (unless the parent already recorded a yes):
+4. IF `AUTO_APPROVE=no` (and the parent hasn't already recorded a yes) → Ask:
 
    ```
    Phase 5 applied the fix locally. Create a GitHub PR against <GIT_BRANCH>?
@@ -81,6 +82,8 @@ gh auth status 2>/dev/null || echo "MISSING: gh auth"
 
    - IF no → return `status: skipped` (`user_declined`). Leave the working tree as-is.
    - IF yes → continue. Still do not commit until Step 3.
+
+   IF `AUTO_APPROVE=yes` → treat as yes, skip the prompt, continue. Still do not commit until Step 3.
 
 ---
 
@@ -114,25 +117,29 @@ A PR is a **match** if its **title** contains (case-insensitive) either:
 
 IF none → continue to Step 3 with strategy `new`.
 
-IF any match → present the list and wait for the user:
+IF any match:
 
-```
-Open PR(s) on <ORG/REPO> base <BASE_BRANCH> already have this CVE/Jira in the title:
+- **`AUTO_APPROVE=no`** → present the list and wait for the user:
 
-  #<N>  <title>  <url>  head=<branch>
+  ```
+  Open PR(s) on <ORG/REPO> base <BASE_BRANCH> already have this CVE/Jira in the title:
 
-How should I proceed?
-  1. stack     — check out that PR branch, commit this fix on top, push (PR updates)
-  2. wait      — stop; do not open a competing PR
-  3. independent — new branch from <BASE_BRANCH> (may need rebase later)
-```
+    #<N>  <title>  <url>  head=<branch>
 
-| Choice        | Action                                                                                                                                                                                                                           |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stack`       | `git fetch origin <headRefName> && git checkout <headRefName> && git pull`. Re-apply leftover Phase 5 changes if they are not already on that branch (same method as Phase 5 — bump, patch, or config edit). Strategy = `stack`. |
-| `wait`        | Return `status: skipped` (`user_wait_for_pr`) including the existing PR URL.                                                                                                                                                     |
-| `independent` | Warn that a second PR on the same base may need rebase later. If `go.mod` is in this diff, mention possible module-file conflicts. Strategy = `new`.                                                                             |
-| No answer     | **Do not guess.** Ask again.                                                                                                                                                                                                     |
+  How should I proceed?
+    1. stack     — check out that PR branch, commit this fix on top, push (PR updates)
+    2. wait      — stop; do not open a competing PR
+    3. independent — new branch from <BASE_BRANCH> (may need rebase later)
+  ```
+
+  | Choice        | Action                                                                                                                                                                                                                           |
+  | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `stack`       | `git fetch origin <headRefName> && git checkout <headRefName> && git pull`. Re-apply leftover Phase 5 changes if they are not already on that branch (same method as Phase 5 — bump, patch, or config edit). Strategy = `stack`. |
+  | `wait`        | Return `status: skipped` (`user_wait_for_pr`) including the existing PR URL.                                                                                                                                                     |
+  | `independent` | Warn that a second PR on the same base may need rebase later. If `go.mod` is in this diff, mention possible module-file conflicts. Strategy = `new`.                                                                             |
+  | No answer     | **Do not guess.** Ask again.                                                                                                                                                                                                     |
+
+- **`AUTO_APPROVE=yes`** → **always `wait`**, automatically, with no exceptions: return `status: skipped` (`user_wait_for_pr_auto`) including the existing PR URL. Never auto-choose `stack` (that pushes commits onto a branch nobody reviewed for this run) or `independent` (that opens a second, possibly duplicate/conflicting PR) unattended. Log clearly that this run stopped because of the existing PR, so a human can revisit with `--auto-approve=no` if a different resolution is actually wanted.
 
 ---
 
@@ -176,7 +183,7 @@ WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
 PHASE5_FILES="${WORK_CVE}/phase5-files.txt"
 ```
 
-IF `phase5-files.txt` is missing or empty → rebuild it from Phase 5 Document Changes (and `phase5-before.status` if present). IF the allowlist still cannot be determined → ask the user. Do **not** fall back to whole-worktree `git diff` / `git add -A` / `git add .`.
+IF `phase5-files.txt` is missing or empty → rebuild it from Phase 5 Document Changes (and `phase5-before.status` if present). IF the allowlist still cannot be determined → **this is never gated by `AUTO_APPROVE`**: IF `AUTO_APPROVE=no`, ask the user. IF `AUTO_APPROVE=yes`, there is no one to ask — return `status: failed` (`phase5_files_missing`). Do **not** fall back to whole-worktree `git diff` / `git add -A` / `git add .` in either case.
 
 ```bash
 # inspect current tree for sanity, but do not use it as the stage set
@@ -221,7 +228,7 @@ git -C "${REPO_DIR}" diff --name-only "${BASE_BRANCH}...HEAD" > "${WORK_CVE}/bra
 comm -23 <(sort "${WORK_CVE}/branch-files.txt") <(sort "${PHASE5_FILES}")
 ```
 
-IF that reports any path outside `PHASE5_FILES` → stop; do not push or open/update the PR. Ask the user how to proceed (this is committed history, so it cannot be silently unstaged).
+IF that reports any path outside `PHASE5_FILES` → stop; do not push or open/update the PR. **Never gated by `AUTO_APPROVE`** (this is committed history, so it cannot be silently unstaged): IF `AUTO_APPROVE=no`, ask the user how to proceed. IF `AUTO_APPROVE=yes`, return `status: failed` (`phase5_files_mismatch`) for manual follow-up.
 
 **Commit message** (OpenShift `UPSTREAM:` style). Match the **actual** Phase 5 change, not a canned module bump.
 
@@ -265,7 +272,7 @@ Never use `--no-verify` or skip hooks unless the user explicitly asks.
 git -C "${REPO_DIR}" push -u origin "${BRANCH_NAME}"
 ```
 
-For stack updates after amend only, `git push --force-with-lease` — and only if the user approved amending. Default is a normal push.
+For stack updates after amend only, `git push --force-with-lease` — and only if the user approved amending. Default is a normal push. Amending an existing commit and force-pushing is never authorized by `AUTO_APPROVE`; it always requires an interactive user (moot in practice, since `AUTO_APPROVE=yes` never selects `stack` — see Step 2).
 
 ---
 
@@ -393,7 +400,7 @@ IF posting fails → display the comment in session for manual paste. The GitHub
 {
   "skill": "create-fix-pr",
   "status": "skipped",
-  "reason": "user_declined | no_local_changes | phase5_incomplete | user_wait_for_pr | embargo"
+  "reason": "user_declined | no_local_changes | phase5_incomplete | user_wait_for_pr | user_wait_for_pr_auto | embargo"
 }
 ```
 
@@ -403,7 +410,7 @@ IF posting fails → display the comment in session for manual paste. The GitHub
 {
   "skill": "create-fix-pr",
   "status": "failed",
-  "reason": "git_missing | gh_missing | gh_unauthenticated | pr_create_failed | commit_failed",
+  "reason": "git_missing | gh_missing | gh_unauthenticated | pr_create_failed | commit_failed | phase5_files_missing | phase5_files_mismatch",
   "error": "<message without secrets>"
 }
 ```
@@ -418,12 +425,14 @@ Called from **Phase 6** of `CLAUDE.md` after Phase 5 verification succeeds.
 
 ## Guardrails
 
-- Never commit, push, or open a PR without explicit user approval
+- Never commit, push, or open a PR without explicit approval — interactive, or `AUTO_APPROVE=yes` recorded once upfront
 - Never force-push to `BASE_BRANCH` / `main` / `master` / `release-*`
 - Never skip git hooks unless the user asks
 - Never stage paths outside `PHASE5_FILES`; never `git add -A` or `git add .`
 - Never commit/push/PR without validating the staged (and, for `stack`, the branch) path set against `PHASE5_FILES` and rejecting extras
 - Never run vendor sync in Phase 6 — it happens in Phase 5, before `PHASE5_FILES` is written
+- Never let `AUTO_APPROVE=yes` auto-select `stack` or `independent` on a PR-title conflict — always `wait` unattended
+- Never let `AUTO_APPROVE=yes` skip a hard-fail case (missing/mismatched `PHASE5_FILES`, ambiguous conflict resolution) — those always require a human, flag or not
 - Never include secrets in commit messages, PR text, or Jira comments
 - Stop immediately on embargo
 - Direct CVE mode must still produce a PR
