@@ -425,7 +425,7 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 
 ## Phase 3: Report Generation
 
-Generate analysis report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`.
+Generate analysis report at `${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/{CVE-ID}/report.md` — the same workspace base as Phase 0.7's `REPOS_BASE`, so the report lands in the configured workspace regardless of the caller's current directory.
 
 **Report structure:**
 - Executive Summary: risk level, confidence, key takeaway
@@ -469,10 +469,10 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 
 Requires **explicit approval** before proceeding — this is the Phase 4 decision point above (`AUTO_APPROVE=yes` counts as that approval; no separate prompt here). Do not change live cluster or production-environment configuration. Repo-tracked config files are allowed only as the approved remediation.
 
-**Before applying anything**, snapshot the worktree so Phase 6 can stage only Phase 5 files (including new untracked paths). `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR`:
+**Before applying anything**, snapshot the worktree so Phase 6 can stage only Phase 5 files (including new untracked paths). `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR` — derive it from the same base as `REPOS_BASE` (Phase 0.7), not a bare relative path, so it doesn't depend on the caller's current directory:
 
 ```bash
-WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
+WORK_CVE="${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/${CVE_ID}"
 mkdir -p "${WORK_CVE}"
 git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 ```
@@ -530,7 +530,7 @@ Requires **explicit approval** before any commit, push, or `gh pr create`. This 
 
 ## Output
 
-- **Format**: Markdown report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`
+- **Format**: Markdown report at `${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/{CVE-ID}/report.md`
 - **Content**: Vulnerability details, risk assessment, evidence, remediation recommendations, applied fixes (if approved), GitHub PR URL (if Phase 6 ran)
 
 ## Notes

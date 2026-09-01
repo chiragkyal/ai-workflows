@@ -74,19 +74,37 @@ By default (no `FORK_ORG`) this skill pushes the fix branch directly to the clon
 FORK_REPO="${FORK_ORG}/${REPO}"   # REPO = repo name parsed from origin in Step 1, e.g. "cert-manager-operator"
 ```
 
-### Ensure the fork exists
+### Ensure the fork exists and is actually a fork of this repo
+
+Never assume a repo at `${FORK_REPO}` is the right push target just because the name matches — verify its fork lineage first. Reusing an unrelated (or unexpectedly renamed/transferred) repo that happens to occupy that name would push the fix branch and open a PR from somewhere unintended.
 
 ```bash
-if ! gh repo view "${FORK_REPO}" >/dev/null 2>&1; then
-  echo "Fork ${FORK_REPO} does not exist yet — creating it..."
-  gh repo fork "${ORG}/${REPO}" --org "${FORK_ORG}" --remote=false --clone=false --default-branch-only=false \
-    || { echo "ERROR: failed to fork ${ORG}/${REPO} into ${FORK_ORG}"; return_status="failed"; }
-  # Forking is asynchronous on GitHub's side; poll briefly rather than failing immediately.
-  for i in $(seq 1 10); do
-    gh repo view "${FORK_REPO}" >/dev/null 2>&1 && break
-    sleep 3
-  done
+if FORK_JSON=$(gh repo view "${FORK_REPO}" --json isFork,parent 2>/dev/null); then
+  IS_FORK=$(echo "$FORK_JSON" | jq -r '.isFork')
+  PARENT_FULL_NAME=$(echo "$FORK_JSON" | jq -r '.parent.fullName // empty')
+else
+  IS_FORK=""
+  PARENT_FULL_NAME=""
 fi
+```
+
+- IF `${FORK_REPO}` exists (the `gh repo view` above succeeded) **and** (`IS_FORK` is not exactly `true` **or** `PARENT_FULL_NAME` is not exactly `${ORG}/${REPO}`) → **stop immediately**, do not add the `fork` remote or push anything, and return `status: failed` (`fork_wrong_lineage`).
+- IF `${FORK_REPO}` exists and lineage matches → skip fork creation below, continue to Step 3a.
+- IF `${FORK_REPO}` does not exist → create it:
+
+```bash
+gh repo fork "${ORG}/${REPO}" --org "${FORK_ORG}" --remote=false --clone=false --default-branch-only=false
+FORK_CREATE_EXIT=$?
+```
+
+- IF `FORK_CREATE_EXIT` is non-zero → **stop immediately** and return `status: failed` (`fork_create_failed`). Do not poll, do not add the `fork` remote, do not push — the create call already reported failure, so there is nothing to wait for.
+- IF `FORK_CREATE_EXIT` is `0` → the fork was accepted; poll briefly, since GitHub creates forks asynchronously:
+
+```bash
+for i in $(seq 1 10); do
+  gh repo view "${FORK_REPO}" >/dev/null 2>&1 && break
+  sleep 3
+done
 ```
 
 - IF the fork still doesn't exist after polling → return `status: failed` (`fork_create_failed`). Do not fall back to pushing to `origin` — that would silently switch to requiring direct upstream write access, which is exactly what `FORK_ORG` was set to avoid.
@@ -113,16 +131,22 @@ Never force-push `${BASE_BRANCH}` on `origin` (the upstream repo) — the force-
 
 ### Step 4 (fork mode). Create the PR across fork → upstream
 
+**Do not use `gh pr create --head "${FORK_ORG}:${BRANCH_NAME}"`.** `gh pr create --head` only supports a **user**-owned head repo via the `owner:branch` syntax — per `gh pr create --help`: "Using an organization as the owner is currently not supported" (tracked at [cli/cli#10093](https://github.com/cli/cli/issues/10093)). Since `FORK_ORG` may be a GitHub organization, use the REST API's `head_repo` parameter instead (via `gh api`), which unambiguously names the head repository regardless of whether `FORK_ORG` is a user or an org:
+
 ```bash
-gh pr create \
-  --repo "${ORG}/${REPO}" \
-  --base "${BASE_BRANCH}" \
-  --head "${FORK_ORG}:${BRANCH_NAME}" \
-  --title "${PR_TITLE}" \
-  --body "${PR_BODY}"
+printf '%s' "${PR_BODY}" > "${WORK_CVE}/pr-body.md"
+
+PR_URL=$(gh api \
+  "repos/${ORG}/${REPO}/pulls" \
+  -f head_repo="${FORK_REPO}" \
+  -f head="${BRANCH_NAME}" \
+  -f base="${BASE_BRANCH}" \
+  -f title="${PR_TITLE}" \
+  -F body=@"${WORK_CVE}/pr-body.md" \
+  --jq '.html_url')
 ```
 
-Everything else in Step 4 (title/body construction, stacked-PR update path, capturing `PR_URL`) is unchanged — only `--head` differs (`${FORK_ORG}:${BRANCH_NAME}` instead of a same-repo branch name).
+`head` is the **bare branch name** here (no `owner:` prefix) — disambiguation comes entirely from the separate `head_repo` field, so this works whether `FORK_ORG`/`FORK_REPO` is user- or org-owned. Everything else in Step 4 (title/body construction, stacked-PR update path) is unchanged; `PR_URL` is captured directly from the API response instead of `gh pr create`'s output.
 
 ### Auth note
 
@@ -248,7 +272,7 @@ Stage **only `PHASE5_FILES`**, not the whole worktree. That allowlist is written
 `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR`. Paths in the allowlist are relative to `REPO_DIR`.
 
 ```bash
-WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
+WORK_CVE="${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/${CVE_ID}"
 PHASE5_FILES="${WORK_CVE}/phase5-files.txt"
 ```
 
