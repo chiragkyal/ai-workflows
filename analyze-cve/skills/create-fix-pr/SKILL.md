@@ -35,6 +35,7 @@ From the parent workflow:
 | `CVE_ID`                              | Phase 0.5 / direct CVE mode                            | Yes                      |
 | `SOURCE_TICKET`                       | `--jira=` / `--jql=`                                   | No                       |
 | `AUTO_APPROVE`                        | Phase 0 (`--auto-approve`, default `no`)               | Yes                      |
+| `FORK_ORG`                             | Caller environment (e.g. CI runner)                    | No — enables [Fork Mode](#fork-mode-fork_org-set) when set |
 | `PHASE5_FILES`                        | Phase 5 allowlist (incl. untracked)                    | Yes                      |
 | Module path, old version, new version | Phase 4 / 5                                            | Yes if a dependency bump |
 | Short CVE description                 | Phase 1                                                | Recommended              |
@@ -58,6 +59,74 @@ gh auth status 2>/dev/null || echo "MISSING: gh auth"
 - Do not print token or login output that contains credentials.
 
 > **Credential rule:** Never print, echo, or log tokens, PATs, or `gh` auth output that contains credentials. Pass credentials only via environment variable references.
+
+---
+
+## Fork Mode (`FORK_ORG` set)
+
+By default (no `FORK_ORG`) this skill pushes the fix branch directly to the cloned repo's own `origin` and opens a same-repo branch→base PR. That requires the authenticated `gh`/`git` identity to have **direct write access** to every upstream repo `image-repo-mapping` might resolve to (e.g. `openshift/cert-manager-operator`, `openshift/cert-manager`, `openshift/secrets-store-csi-driver-operator`, ...). In an unattended CI runner that isn't a collaborator on all of those repos, that's the wrong default.
+
+**IF the environment variable `FORK_ORG` is set** (e.g. `jira-solve-bot`), push to a fork under that org instead and open a cross-repo PR — mirrors the fork/upstream model used elsewhere for automated OpenShift PRs. This section only changes **where the branch is pushed** and **how the PR's `--head` is specified**; Steps 0–2 (safety gates, org/repo/base-branch resolution from `origin`, conflicting-PR detection) and Step 3b (commit, allowlist validation) are unchanged and still operate against `REPO_DIR`/`ORG`/`REPO`/`BASE_BRANCH` resolved from `origin`.
+
+### Resolve the fork repo
+
+```bash
+FORK_REPO="${FORK_ORG}/${REPO}"   # REPO = repo name parsed from origin in Step 1, e.g. "cert-manager-operator"
+```
+
+### Ensure the fork exists
+
+```bash
+if ! gh repo view "${FORK_REPO}" >/dev/null 2>&1; then
+  echo "Fork ${FORK_REPO} does not exist yet — creating it..."
+  gh repo fork "${ORG}/${REPO}" --org "${FORK_ORG}" --remote=false --clone=false --default-branch-only=false \
+    || { echo "ERROR: failed to fork ${ORG}/${REPO} into ${FORK_ORG}"; return_status="failed"; }
+  # Forking is asynchronous on GitHub's side; poll briefly rather than failing immediately.
+  for i in $(seq 1 10); do
+    gh repo view "${FORK_REPO}" >/dev/null 2>&1 && break
+    sleep 3
+  done
+fi
+```
+
+- IF the fork still doesn't exist after polling → return `status: failed` (`fork_create_failed`). Do not fall back to pushing to `origin` — that would silently switch to requiring direct upstream write access, which is exactly what `FORK_ORG` was set to avoid.
+
+### 3a (fork mode). Branch — same as default mode
+
+Branch creation/naming is identical to the non-fork case above (`BRANCH_NAME` derived from `CVE_ID`/`SOURCE_TICKET`, checked out from `BASE_BRANCH`).
+
+### 3c (fork mode). Push to the fork, not `origin`
+
+```bash
+git -C "${REPO_DIR}" remote add fork "https://github.com/${FORK_REPO}.git" 2>/dev/null \
+  || git -C "${REPO_DIR}" remote set-url fork "https://github.com/${FORK_REPO}.git"
+
+# Keep the fork in sync with the upstream base branch before pushing a branch built on top of it,
+# so the PR diff is just this fix — not a stale-fork drift diff.
+git -C "${REPO_DIR}" fetch origin "${BASE_BRANCH}"
+git -C "${REPO_DIR}" push fork "refs/remotes/origin/${BASE_BRANCH}:refs/heads/${BASE_BRANCH}" --force-with-lease 2>/dev/null || true
+
+git -C "${REPO_DIR}" push -u fork "${BRANCH_NAME}"
+```
+
+Never force-push `${BASE_BRANCH}` on `origin` (the upstream repo) — the force-with-lease sync above only ever targets the `fork` remote's copy of that branch name, never `origin`.
+
+### Step 4 (fork mode). Create the PR across fork → upstream
+
+```bash
+gh pr create \
+  --repo "${ORG}/${REPO}" \
+  --base "${BASE_BRANCH}" \
+  --head "${FORK_ORG}:${BRANCH_NAME}" \
+  --title "${PR_TITLE}" \
+  --body "${PR_BODY}"
+```
+
+Everything else in Step 4 (title/body construction, stacked-PR update path, capturing `PR_URL`) is unchanged — only `--head` differs (`${FORK_ORG}:${BRANCH_NAME}` instead of a same-repo branch name).
+
+### Auth note
+
+`gh auth status` in Prerequisites must reflect a token with `public_repo` (classic PAT) or equivalent fork/push/PR scope on `${FORK_ORG}` and PR-creation scope against the upstream repo — this is set up by the caller before this skill runs (not part of this skill). Never echo the token itself.
 
 ---
 

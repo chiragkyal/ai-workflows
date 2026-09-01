@@ -216,11 +216,13 @@ JQL matched <N> issue(s) in this batch (there may be more beyond max_results=10)
 Cloned repos are stored under the **persistent workflow mount** so they survive Ambient shell resets:
 
 ```bash
-REPOS_BASE="/workspace/workflows/ai-workflows/.work/repos"
+REPOS_BASE="${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/repos"
 mkdir -p "${REPOS_BASE}"
 ```
 
-`/workspace/workflows/` is the persistent git mount. `.work/` is gitignored. Repos cloned here are **not** wiped when the container shell recycles (unlike `/workspace/repos/` which is ephemeral scratch).
+`/workspace/workflows/` is the persistent git mount in an Ambient session. `.work/` is gitignored. Repos cloned here are **not** wiped when the container shell recycles (unlike `/workspace/repos/` which is ephemeral scratch).
+
+**Non-Ambient runtimes (e.g. a CI/Prow container):** there is no `/workspace/workflows/` mount. The caller must export `AI_WORKFLOWS_WORKSPACE` to a writable directory before invoking this workflow (e.g. `/tmp/analyze-cve-workspace`); every path below is derived from it, so nothing else in this doc needs to change. If unset, the Ambient default above is used unchanged.
 
 ### Step 1: Check for Pre-Cloned Repository
 
@@ -506,7 +508,7 @@ git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 **Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 - **Skill**: [create-fix-pr](skills/create-fix-pr/SKILL.md)
-- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, module bump (`old` → `new`) **only if** the fix is a dependency bump, and `AUTO_APPROVE`
+- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, module bump (`old` → `new`) **only if** the fix is a dependency bump, `AUTO_APPROVE`, and `FORK_ORG` (optional env var — if set, the skill pushes to a fork under that org and opens a cross-repo PR instead of pushing directly to the resolved upstream repo; see the skill's Fork Mode section)
 - **Output**: GitHub PR URL (created or updated); optional follow-up Jira comment with that URL
 
 Requires **explicit approval** before any commit, push, or `gh pr create`. This is a separate approval from Phase 5 (applying the fix locally does not imply opening a PR) — `AUTO_APPROVE=yes` must satisfy both approvals independently, since a user could legitimately want fixes applied but PR creation left to them (not possible when `AUTO_APPROVE` is a single flag for a scheduled run, but the two gates stay conceptually distinct in the docs below).
