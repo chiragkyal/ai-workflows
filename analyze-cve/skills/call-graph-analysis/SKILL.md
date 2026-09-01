@@ -33,7 +33,7 @@ Use this skill when:
 - Workspace path to analyze
 - Algorithm preference (optional, default: `vta`) — passed via `--algo` from parent command
 - `CVE_ID` — used to construct the output directory
-- `OUT_DIR` (optional, default: `.work/compliance/analyze-cve/${CVE_ID}`) — where artifacts are written
+- `OUT_DIR` (optional, default: `${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/${CVE_ID}`) — where artifacts are written; same workspace base as Phase 0.7's `REPOS_BASE`
 
 ## Critical Rules
 
@@ -81,7 +81,7 @@ Pick the most relevant main package for the analysis (typically the controller o
 
 ```bash
 ALGO="${USER_ALGO:-vta}"
-OUT_DIR="${OUT_DIR:-.work/compliance/analyze-cve/${CVE_ID}}"
+OUT_DIR="${OUT_DIR:-${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/${CVE_ID}}"
 mkdir -p "${OUT_DIR}"
 
 # TARGET_PKG is the specific main package (e.g. ./cmd/controller, .)
@@ -273,7 +273,7 @@ Return structured result to parent analysis:
 ```bash
 # Setup
 CVE_ID="CVE-YYYY-NNNNN"
-OUT_DIR=".work/compliance/analyze-cve/${CVE_ID}"
+OUT_DIR="${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/${CVE_ID}"
 mkdir -p "${OUT_DIR}"
 
 # Step 1: Build call graph targeting a specific main package

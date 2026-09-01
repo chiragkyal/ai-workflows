@@ -216,11 +216,13 @@ JQL matched <N> issue(s) in this batch (there may be more beyond max_results=10)
 Cloned repos are stored under the **persistent workflow mount** so they survive Ambient shell resets:
 
 ```bash
-REPOS_BASE="/workspace/workflows/ai-workflows/.work/repos"
+REPOS_BASE="${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/repos"
 mkdir -p "${REPOS_BASE}"
 ```
 
-`/workspace/workflows/` is the persistent git mount. `.work/` is gitignored. Repos cloned here are **not** wiped when the container shell recycles (unlike `/workspace/repos/` which is ephemeral scratch).
+`/workspace/workflows/` is the persistent git mount in an Ambient session. `.work/` is gitignored. Repos cloned here are **not** wiped when the container shell recycles (unlike `/workspace/repos/` which is ephemeral scratch).
+
+**Non-Ambient runtimes (e.g. a CI/Prow container):** there is no `/workspace/workflows/` mount. The caller must export `AI_WORKFLOWS_WORKSPACE` to a writable directory before invoking this workflow (e.g. `/tmp/analyze-cve-workspace`); every path below is derived from it, so nothing else in this doc needs to change. If unset, the Ambient default above is used unchanged.
 
 ### Step 1: Check for Pre-Cloned Repository
 
@@ -423,7 +425,7 @@ Pass the full `jira_context` object from Phase 0.5 into the skill. The skill use
 
 ## Phase 3: Report Generation
 
-Generate analysis report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`.
+Generate analysis report at `${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/{CVE-ID}/report.md` — the same workspace base as Phase 0.7's `REPOS_BASE`, so the report lands in the configured workspace regardless of the caller's current directory.
 
 **Report structure:**
 - Executive Summary: risk level, confidence, key takeaway
@@ -467,10 +469,10 @@ After presenting the report (regardless of whether the user proceeds to Phase 5)
 
 Requires **explicit approval** before proceeding — this is the Phase 4 decision point above (`AUTO_APPROVE=yes` counts as that approval; no separate prompt here). Do not change live cluster or production-environment configuration. Repo-tracked config files are allowed only as the approved remediation.
 
-**Before applying anything**, snapshot the worktree so Phase 6 can stage only Phase 5 files (including new untracked paths). `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR`:
+**Before applying anything**, snapshot the worktree so Phase 6 can stage only Phase 5 files (including new untracked paths). `WORK_CVE` is in the **workflow workspace**, not inside `REPO_DIR` — derive it from the same base as `REPOS_BASE` (Phase 0.7), not a bare relative path, so it doesn't depend on the caller's current directory:
 
 ```bash
-WORK_CVE=".work/compliance/analyze-cve/${CVE_ID}"
+WORK_CVE="${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/${CVE_ID}"
 mkdir -p "${WORK_CVE}"
 git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 ```
@@ -506,7 +508,7 @@ git -C "${REPO_DIR}" status --porcelain > "${WORK_CVE}/phase5-before.status"
 **Before starting:** Run the [Repo Guard](#repo-guard--re-clone-if-missing) to verify `REPO_DIR` still exists. Re-clone if needed.
 
 - **Skill**: [create-fix-pr](skills/create-fix-pr/SKILL.md)
-- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, module bump (`old` → `new`) **only if** the fix is a dependency bump, and `AUTO_APPROVE`
+- **Input**: `REPO_DIR`, `GIT_BRANCH`, `REPO_URL`, `CVE_ID`, `SOURCE_TICKET` (if `--jira` was provided), `PHASE5_FILES` allowlist, Phase 5 change summary, module bump (`old` → `new`) **only if** the fix is a dependency bump, `AUTO_APPROVE`, and `FORK_ORG` (optional env var — if set, the skill pushes to a fork under that org and opens a cross-repo PR instead of pushing directly to the resolved upstream repo; see the skill's Fork Mode section)
 - **Output**: GitHub PR URL (created or updated); optional follow-up Jira comment with that URL
 
 Requires **explicit approval** before any commit, push, or `gh pr create`. This is a separate approval from Phase 5 (applying the fix locally does not imply opening a PR) — `AUTO_APPROVE=yes` must satisfy both approvals independently, since a user could legitimately want fixes applied but PR creation left to them (not possible when `AUTO_APPROVE` is a single flag for a scheduled run, but the two gates stay conceptually distinct in the docs below).
@@ -528,7 +530,7 @@ Requires **explicit approval** before any commit, push, or `gh pr create`. This 
 
 ## Output
 
-- **Format**: Markdown report at `.work/compliance/analyze-cve/{CVE-ID}/report.md`
+- **Format**: Markdown report at `${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/{CVE-ID}/report.md`
 - **Content**: Vulnerability details, risk assessment, evidence, remediation recommendations, applied fixes (if approved), GitHub PR URL (if Phase 6 ran)
 
 ## Notes

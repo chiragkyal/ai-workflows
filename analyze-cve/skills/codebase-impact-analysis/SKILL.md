@@ -261,7 +261,7 @@ Collect evidence from all methods used:
 
 - **Dependency Evidence**: `go.mod` entries, `go list` output, version info
 - **Static Code Evidence**: File paths, line numbers, code snippets showing usage
-- **Reachability Evidence**: Call graph output, execution paths, DOT visualization (saved to `.work/compliance/analyze-cve/{CVE-ID}/callgraph.svg`)
+- **Reachability Evidence**: Call graph output, execution paths, DOT visualization (saved to `${AI_WORKFLOWS_WORKSPACE:-/workspace/workflows/ai-workflows}/.work/compliance/analyze-cve/{CVE-ID}/callgraph.svg`)
 - **Scanner Evidence**: `govulncheck` output, vulnerability findings
 - **Mitigation Factors**: Input validation, disabled features, feature flags, security controls
 

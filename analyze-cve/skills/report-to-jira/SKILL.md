@@ -115,10 +115,13 @@ Post to `SOURCE_TICKET` — the ticket the CVE details were read from.
 
 ### Step 3a: REST API with Internal visibility (always attempt first)
 
-Always try the REST API first — don't pre-check for token env vars. The Ambient Jira integration may expose the token under any of several env var names, and the only reliable way to know if it's available is to let `curl` try and check the HTTP response.
+Always try the REST API first — don't pre-check for token env vars. Credentials may be exposed differently depending on the runtime (Ambient session vs. a CI runner with a mounted credential secret), so try **both** auth schemes and let the HTTP response decide which one worked:
+
+1. **Basic auth (email + API token)** — the scheme Red Hat's Jira Cloud instance (`redhat.atlassian.net`) actually expects for API tokens. Used when both `JIRA_EMAIL` and a token are available (e.g. a CI runner that mounted a Jira service-account credential as `jira-email`/`jira-pat`).
+2. **Bearer token only** — fallback for runtimes (e.g. an Ambient session) that expose only a bare token env var with no associated email.
 
 ```bash
-# Try common token env var names — use whichever is set
+# Token: try common env var names — use whichever is set
 JIRA_API_TOKEN="${JIRA_TOKEN:-${ATLASSIAN_TOKEN:-${ATLASSIAN_API_TOKEN:-${JIRA_API_TOKEN:-}}}}"
 JIRA_BASE_URL="${JIRA_URL:-https://redhat.atlassian.net}"
 
@@ -127,34 +130,72 @@ cat > /tmp/cve-report-comment.txt << 'COMMENT_EOF'
 COMMENT_EOF
 
 COMMENT_BODY=$(cat /tmp/cve-report-comment.txt)
-HTTP_STATUS=$(curl -s -o /tmp/jira-post-response.txt -w "%{http_code}" \
-  -X POST \
-  "${JIRA_BASE_URL}/rest/api/2/issue/${SOURCE_TICKET}/comment" \
-  -H "Authorization: Bearer ${JIRA_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data-binary @- << EOF
+COMMENT_JSON_BODY=$(echo "${COMMENT_BODY}" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")
+
+post_comment() {
+  # $1 = full "Authorization" header value, e.g. "Basic xxxx" or "Bearer xxxx"
+  # Write the header to a curl config file (-K) instead of passing it as a
+  # -H flag -- a "-H Authorization: ..." argument would put the credential
+  # directly into this process's argv, visible to anything on the same host
+  # that can read `ps aux` / /proc/<pid>/cmdline while curl runs.
+  local auth_header="$1" curl_cfg
+  curl_cfg=$(mktemp)
+  chmod 600 "${curl_cfg}"
+  [[ $- == *x* ]] && local _was_tracing=true || local _was_tracing=false
+  set +x
+  printf 'header = "Authorization: %s"\n' "${auth_header}" > "${curl_cfg}"
+  $_was_tracing && set -x || true
+
+  curl -s -o /tmp/jira-post-response.txt -w "%{http_code}" \
+    -X POST \
+    -K "${curl_cfg}" \
+    "${JIRA_BASE_URL}/rest/api/2/issue/${SOURCE_TICKET}/comment" \
+    -H "Content-Type: application/json" \
+    --data-binary @- << EOF
 {
-  "body": $(echo "${COMMENT_BODY}" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))"),
+  "body": ${COMMENT_JSON_BODY},
   "visibility": {
     "type": "group",
     "value": "Red Hat Employee"
   }
 }
 EOF
-)
+  rm -f "${curl_cfg}"
+}
 
-echo "Jira API HTTP status: ${HTTP_STATUS}"
+HTTP_STATUS=""
+if [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN}" ]; then
+  echo "Attempting REST post with Basic auth (email + token)..."
+  BASIC_AUTH=$(printf '%s:%s' "${JIRA_EMAIL}" "${JIRA_API_TOKEN}" | base64 | tr -d '\n')
+  HTTP_STATUS=$(post_comment "Basic ${BASIC_AUTH}")
+  unset BASIC_AUTH
+fi
+
+# Only retry with the other auth scheme when Basic wasn't attempted at all
+# (no JIRA_EMAIL -- the bare-Bearer-only runtime case) or came back with an
+# actual auth failure (401/403). This POST is not idempotent: retrying it for
+# every other status (400, 429, 5xx, or curl's own "000") risks creating a
+# duplicate comment if the first request was actually accepted server-side
+# but the response was lost or malformed. Any other failure goes straight to
+# Step 3b instead of retrying.
+if { [ -z "${HTTP_STATUS}" ] || [ "${HTTP_STATUS}" = "401" ] || [ "${HTTP_STATUS}" = "403" ]; } && [ -n "${JIRA_API_TOKEN}" ]; then
+  echo "Attempting REST post with Bearer auth..."
+  HTTP_STATUS=$(post_comment "Bearer ${JIRA_API_TOKEN}")
+fi
+
+echo "Jira API HTTP status: ${HTTP_STATUS:-none attempted}"
 if [ "${HTTP_STATUS}" = "201" ]; then
   echo "✓ Comment posted with Internal visibility"
 else
-  echo "✗ REST API failed (HTTP ${HTTP_STATUS}) — will fall back to MCP tool"
-  cat /tmp/jira-post-response.txt
+  echo "✗ REST API failed (HTTP ${HTTP_STATUS:-n/a}) — will fall back to MCP tool"
+  cat /tmp/jira-post-response.txt 2>/dev/null || true
 fi
 ```
 
-- IF HTTP 201 → done. Skip Step 3b.
-- IF HTTP 401/403 → token not available or insufficient permissions; continue to Step 3b.
-- IF any other failure → continue to Step 3b.
+- IF HTTP 201 (either scheme) → done. Skip Step 3b.
+- IF HTTP 401/403 on both schemes (or Basic wasn't attempted and Bearer also fails) → credentials not available or insufficient permissions; continue to Step 3b.
+- IF Basic auth returns any other status (400, 429, 5xx, curl error `000`) → do **not** retry with Bearer (the POST is not idempotent) — go directly to Step 3b.
+- Never print `JIRA_API_TOKEN`, `JIRA_EMAIL`, the computed `BASIC_AUTH` value, or the contents of `${curl_cfg}` — only the HTTP status code and response body (which contains no credentials).
 
 ---
 
