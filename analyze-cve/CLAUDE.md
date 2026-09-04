@@ -222,7 +222,12 @@ mkdir -p "${REPOS_BASE}"
 
 `/workspace/workflows/` is the persistent git mount in an Ambient session. `.work/` is gitignored. Repos cloned here are **not** wiped when the container shell recycles (unlike `/workspace/repos/` which is ephemeral scratch).
 
-**Non-Ambient runtimes (e.g. a CI/Prow container):** there is no `/workspace/workflows/` mount. The caller must export `AI_WORKFLOWS_WORKSPACE` to a writable directory before invoking this workflow (e.g. `/tmp/analyze-cve-workspace`); every path below is derived from it, so nothing else in this doc needs to change. If unset, the Ambient default above is used unchanged.
+**Non-Ambient runtimes (e.g. Chai Bot RWS or a CI/Prow container):** there is no
+`/workspace/workflows/` mount. Export `AI_WORKFLOWS_WORKSPACE` to a writable
+directory before invoking this workflow. **Chai Bot RWS pods default to
+`/workspace`** — see `reference/chai-bot-rws.md` for Jira tool mapping and
+coordinator vs worker responsibilities. If unset, the Ambient default above is
+used unchanged.
 
 ### Step 1: Check for Pre-Cloned Repository
 
